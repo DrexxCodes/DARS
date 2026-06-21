@@ -12,9 +12,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ global: { id: doc.id, ...doc.data() } });
     }
 
-    // Return all globals
+    // Return all globals (excluding the locationConfig anchor doc, which
+    // holds the `locations` subcollection rather than course class state)
     const snap = await db.collection("globals").get();
-    const globals = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const globals = snap.docs
+      .filter((d) => d.id !== "locationConfig")
+      .map((d) => ({ id: d.id, ...d.data() }));
     return NextResponse.json({ globals });
   } catch (error) {
     console.error("Globals error:", error);

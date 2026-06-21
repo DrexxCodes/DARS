@@ -8,11 +8,13 @@ import { CheckCircle2 } from "lucide-react";
 interface RegNumberFormProps {
   courseId: string;
   courseName: string;
+  lat: number;
+  lng: number;
   onSuccess: (result: { name: string; late: boolean; timestamp: number }) => void;
   onNotFound: () => void;
 }
 
-export default function RegNumberForm({ courseId, courseName, onSuccess, onNotFound }: RegNumberFormProps) {
+export default function RegNumberForm({ courseId, courseName, lat, lng, onSuccess, onNotFound }: RegNumberFormProps) {
   const [regNumber, setRegNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -31,7 +33,7 @@ export default function RegNumberForm({ courseId, courseName, onSuccess, onNotFo
       const res = await fetch("/api/mark", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ regNumber: normalized, courseId }),
+        body: JSON.stringify({ regNumber: normalized, courseId, lat, lng }),
       });
 
       const data = await res.json();

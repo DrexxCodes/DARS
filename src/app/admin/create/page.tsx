@@ -3,22 +3,24 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { Card, Button, Input, Badge, Skeleton, Select } from "@/components/ui";
+import { Card, Button, Input, Badge, Skeleton, Select, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
 import { formatDisplayDate, formatTime } from "@/lib/utils";
 import {
   PlayCircle, StopCircle, PauseCircle, PlayIcon,
-  Plus, Clock, Users, BookOpen, Activity
+  Plus, Clock, Users, BookOpen, Activity, MapPin, Trash2, AlertTriangle
 } from "lucide-react";
 
 interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; }
 interface GlobalState {
   classActive: boolean; checkinPaused: boolean;
   startTime: number | null; endTime: number | null; currentDate: string | null;
+  locationId?: string; locationName?: string;
 }
-interface Session { dateKey: string; totalPresence: number; startTime: number; endTime: number; startedBy: string; }
+interface Session { dateKey: string; totalPresence: number; startTime: number; endTime: number; startedBy: string; locationName?: string; }
 interface ActivityLog { id: string; action: string; courseId: string; adminName: string; timestamp: number; dateKey: string; }
+interface LocationTag { id: string; name: string; isPrimary: boolean; }
 
 export default function AdminCreatePage() {
   const { profile, loading: authLoading } = useAuth();
@@ -36,6 +38,14 @@ export default function AdminCreatePage() {
   const [showCourseForm, setShowCourseForm] = useState(false);
   const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "" });
   const [creatingCourse, setCreatingCourse] = useState(false);
+
+  // Location tags (for picking where a class is held when starting it)
+  const [locations, setLocations] = useState<LocationTag[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState("");
+
+  // Delete course (super admin only)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -56,6 +66,20 @@ export default function AdminCreatePage() {
   }, [profile, selectedCourse]);
 
   useEffect(() => { if (profile?.admin) fetchCourses(); }, [profile, fetchCourses]);
+
+  const fetchLocations = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/admin/locations", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      const locs: LocationTag[] = data.locations || [];
+      setLocations(locs);
+      const primary = locs.find((l) => l.isPrimary);
+      if (primary && !selectedLocationId) setSelectedLocationId(primary.id);
+    } catch { /* silent */ }
+  }, [selectedLocationId]);
+
+  useEffect(() => { if (profile?.admin) fetchLocations(); }, [profile, fetchLocations]);
 
   const fetchCourseState = useCallback(async (courseId: string) => {
     if (!courseId) return;
@@ -85,24 +109,58 @@ export default function AdminCreatePage() {
 
   const doAction = async (action: "start" | "end" | "pause" | "resume") => {
     if (!selectedCourse) return;
+    if (action === "start" && !selectedLocationId) {
+      toast.error("Select a location for this class first.");
+      return;
+    }
     setActionLoading(action);
     try {
       const token = await getToken();
       const res = await fetch("/api/classes", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action, courseId: selectedCourse }),
+        body: JSON.stringify({
+          action,
+          courseId: selectedCourse,
+          ...(action === "start" ? { locationId: selectedLocationId } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Action failed"); return; }
       toast.success({
-        start: "Class started! Students can now mark attendance.",
+        start: `Class started at ${data.locationName || "the selected location"}! Students can now mark attendance.`,
         end: "Class ended.",
         pause: "Check-in paused.",
         resume: "Check-in resumed.",
       }[action]);
       fetchCourseState(selectedCourse);
     } catch { toast.error("Action failed."); } finally { setActionLoading(null); }
+  };
+
+  const handleDeleteCourse = async () => {
+    if (!selectedCourse) return;
+    setDeleting(true);
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/classes", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ courseId: selectedCourse }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Failed to delete course."); return; }
+      toast.success("Course and all its data have been deleted.");
+      setShowDeleteDialog(false);
+      setSelectedCourse("");
+      setGlobalState(null);
+      setSessions([]);
+      setActivityLog([]);
+      fetchCourses();
+    } catch {
+      toast.error("Failed to delete course.");
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleCreateCourse = async () => {
@@ -166,13 +224,24 @@ export default function AdminCreatePage() {
 
       {/* Course picker */}
       {courses.length > 0 && (
-        <Card className="p-5">
+        <Card className="p-5 space-y-4">
           <Select
             label="Select Course"
             value={selectedCourse}
             onChange={(e) => setSelectedCourse(e.target.value)}
             options={courses.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }))}
           />
+          {profile.scope === "super" && selectedCourse && (
+            <div className="flex justify-end">
+              <Button
+                size="sm" variant="danger" icon={<Trash2 className="w-3.5 h-3.5" />}
+                disabled={!!isActive}
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                Delete Course
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
@@ -211,6 +280,7 @@ export default function AdminCreatePage() {
                     {isActive && globalState?.startTime && (
                       <p className="text-xs text-slate-500 mt-0.5">
                         Started at {formatTime(globalState.startTime)} · Ends at {formatTime(globalState.endTime!)}
+                        {globalState?.locationName && <> · <MapPin className="w-3 h-3 inline -mt-0.5" /> {globalState.locationName}</>}
                       </p>
                     )}
                   </div>
@@ -221,11 +291,34 @@ export default function AdminCreatePage() {
                   )}
                 </div>
 
+                {/* Location picker — only relevant before starting a class */}
+                {!isActive && (
+                  <div className="mb-5">
+                    {locations.length === 0 ? (
+                      <div className="flex items-start gap-2 text-left bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 text-sm p-3 rounded-lg">
+                        <MapPin className="w-4 h-4 mt-0.5 shrink-0" />
+                        <span>
+                          No location tags exist yet. Create one on the{" "}
+                          <a href="/admin/tags" className="underline font-medium">Tags page</a> before starting a class.
+                        </span>
+                      </div>
+                    ) : (
+                      <Select
+                        label="Class Location"
+                        value={selectedLocationId}
+                        onChange={(e) => setSelectedLocationId(e.target.value)}
+                        options={locations.map((l) => ({ value: l.id, label: l.isPrimary ? `${l.name} (Primary)` : l.name }))}
+                      />
+                    )}
+                  </div>
+                )}
+
                 {/* Action buttons */}
                 <div className="flex gap-3 flex-wrap">
                   {!isActive && (
                     <Button icon={<PlayCircle className="w-4 h-4" />}
-                      loading={actionLoading === "start"} onClick={() => doAction("start")}>
+                      loading={actionLoading === "start"} disabled={!locations.length}
+                      onClick={() => doAction("start")}>
                       {actionLoading === "start" ? actionLabel.start : "Start Class"}
                     </Button>
                   )}
@@ -271,6 +364,7 @@ export default function AdminCreatePage() {
                         <p className="font-medium text-slate-900 dark:text-white">{formatDisplayDate(s.dateKey)}</p>
                         <p className="text-xs text-slate-400">
                           {formatTime(s.startTime)} – {formatTime(s.endTime)}
+                          {s.locationName && <> · {s.locationName}</>}
                         </p>
                       </div>
                     </div>
@@ -314,6 +408,27 @@ export default function AdminCreatePage() {
           </Card>
         </>
       )}
+
+      {/* Delete course confirmation — super admin only */}
+      <Dialog
+        open={showDeleteDialog}
+        onClose={() => setShowDeleteDialog(false)}
+        title="Delete Course"
+        variant="danger"
+        icon={<AlertTriangle className="w-5 h-5" />}
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-5">
+          This permanently deletes <strong>{courses.find((c) => c.id === selectedCourse)?.name}</strong>{" "}
+          and every class session, activity log entry, and student attendance record tied to it. This cannot be undone.
+        </p>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+          <Button variant="danger" className="flex-1" icon={<Trash2 className="w-4 h-4" />}
+            loading={deleting} onClick={handleDeleteCourse}>
+            Delete Permanently
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }

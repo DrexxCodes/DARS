@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Menu, X, CheckSquare, Sun, Moon, LogOut } from "lucide-react";
+import { Menu, X, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "next-themes";
 
 export default function Navbar() {
@@ -22,6 +23,7 @@ export default function Navbar() {
     { href: "/dashboard", label: "Dashboard", show: !!profile },
     { href: "/admin", label: "Admin", show: isAdmin },
     { href: "/admin/create", label: "Classes", show: isAdmin },
+    { href: "/admin/tags", label: "Tags", show: isAdmin && profile?.scope === "super" },
     { href: "/admin/add", label: "Manage Admins", show: isAdmin && profile?.scope === "super" },
   ].filter((l) => l.always || l.show);
 
@@ -46,9 +48,14 @@ export default function Navbar() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center shadow-sm group-hover:bg-brand-700 transition-colors">
-              <CheckSquare className="w-4 h-4 text-white" />
-            </div>
+            <Image
+              src="/icon.png"
+              alt="DARS"
+              width={32}
+              height={32}
+              className="w-8 h-8 rounded-lg object-cover shadow-sm"
+              priority
+            />
             <span className="font-bold text-slate-900 dark:text-white text-lg tracking-tight">
               DARS
             </span>
@@ -72,8 +79,8 @@ export default function Navbar() {
               {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
-            {/* Logout */}
-            {profile && (
+            {/* Logout — admins only */}
+            {isAdmin && (
               <button
                 onClick={logout}
                 className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
@@ -99,7 +106,7 @@ export default function Navbar() {
             {navLinks.map((l) => (
               <LinkItem key={l.href} href={l.href} label={l.label} />
             ))}
-            {profile && (
+            {isAdmin && (
               <button
                 onClick={() => { logout(); setMobileOpen(false); }}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors text-left"
