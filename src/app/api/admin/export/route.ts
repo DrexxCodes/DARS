@@ -1,7 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 
-async function verifyAdmin(req: NextRequest) {
+interface AdminUser {
+  uid: string;
+  admin: boolean;
+  scope?: "super" | "defined";
+  assignedCourses?: string[];
+  [key: string]: unknown;
+}
+
+interface Course {
+  id: string;
+  name: string;
+  code: string;
+  assignedAdmins?: string[];
+}
+
+interface Student {
+  id: string;
+  name: string;
+  regNumber?: string;
+  [key: string]: unknown;
+}
+
+async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   try {
@@ -10,7 +32,7 @@ async function verifyAdmin(req: NextRequest) {
     if (!userDoc.exists) return null;
     const user = userDoc.data()!;
     if (!user.admin) return null;
-    return { uid: decoded.uid, ...user };
+    return { uid: decoded.uid, ...user } as AdminUser;
   } catch {
     return null;
   }
@@ -26,16 +48,16 @@ export async function GET(req: NextRequest) {
 
     // Get all students
     const studentsSnap = await db.collection("students").orderBy("regNumber", "asc").get();
-    const students = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() as Record<string, unknown> }));
+    const students: Student[] = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Student));
 
     // Get courses (scoped to admin if defined)
-    let coursesSnap;
+    let coursesSnap: Course[];
     if (courseId) {
       const doc = await db.collection("courses").doc(courseId).get();
-      coursesSnap = doc.exists ? [{ id: doc.id, ...doc.data() as Record<string, unknown> }] : [];
+      coursesSnap = doc.exists ? [{ id: doc.id, ...doc.data() } as Course] : [];
     } else {
       const snap = await db.collection("courses").get();
-      coursesSnap = snap.docs.map((d) => ({ id: d.id, ...d.data() as Record<string, unknown> }));
+      coursesSnap = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
     }
 
     // Scope filter for defined admins

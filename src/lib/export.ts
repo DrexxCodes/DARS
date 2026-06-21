@@ -1,4 +1,5 @@
 import Papa from "papaparse";
+import type jsPDF from "jspdf";
 
 export function exportCSV(rows: Record<string, unknown>[], filename: string) {
   const csv = Papa.unparse(rows);

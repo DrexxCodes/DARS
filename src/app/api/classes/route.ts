@@ -2,7 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 import { format } from "date-fns";
 
-async function verifyAdmin(req: NextRequest) {
+interface AdminUser {
+  uid: string;
+  admin: boolean;
+  name: string;
+  scope?: "super" | "defined";
+  assignedCourses?: string[];
+  [key: string]: unknown;
+}
+
+async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   try {
@@ -11,7 +20,7 @@ async function verifyAdmin(req: NextRequest) {
     if (!userDoc.exists) return null;
     const user = userDoc.data()!;
     if (!user.admin) return null;
-    return { uid: decoded.uid, ...user };
+    return { uid: decoded.uid, ...user } as AdminUser;
   } catch {
     return null;
   }

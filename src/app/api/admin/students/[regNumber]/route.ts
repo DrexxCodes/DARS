@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 
+interface Course {
+  id: string;
+  name: string;
+  code: string;
+  assignedAdmins?: string[];
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ regNumber: string }> }
@@ -74,7 +81,7 @@ export async function GET(
 
     // Get attendance across all courses
     const coursesSnap = await db.collection("courses").get();
-    const courses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() as Record<string, unknown> }));
+    const courses: Course[] = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
 
     const attendanceData = await Promise.all(
       courses.map(async (course) => {

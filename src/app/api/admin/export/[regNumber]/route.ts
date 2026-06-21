@@ -1,7 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 
-async function verifyAdmin(req: NextRequest) {
+interface AdminUser {
+  uid: string;
+  admin: boolean;
+  scope?: "super" | "defined";
+  assignedCourses?: string[];
+  [key: string]: unknown;
+}
+
+interface Course {
+  id: string;
+  name: string;
+  code: string;
+  assignedAdmins?: string[];
+}
+
+async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   try {
@@ -10,7 +25,7 @@ async function verifyAdmin(req: NextRequest) {
     if (!userDoc.exists) return null;
     const user = userDoc.data()!;
     if (!user.admin) return null;
-    return { uid: decoded.uid, ...user };
+    return { uid: decoded.uid, ...user } as AdminUser;
   } catch {
     return null;
   }
@@ -31,7 +46,7 @@ export async function GET(
     const student = studentDoc.data()!;
 
     const coursesSnap = await db.collection("courses").get();
-    const courses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() as Record<string, unknown> }));
+    const courses: Course[] = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
 
     const rows: Record<string, unknown>[] = [];
 
