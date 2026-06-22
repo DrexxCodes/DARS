@@ -1,132 +1,105 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 
-type SuperAdmin = {
+interface AdminUser {
   uid: string;
   admin: boolean;
-  scope: "super" | "defined";
-  name?: string;
-  assignedCourses?: string[];
-};
+  scope?: "super" | "defined";
+  [key: string]: unknown;
+}
 
-async function verifySuperAdmin(req: NextRequest): Promise<SuperAdmin | null> {
+async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
   if (!token) return null;
   try {
     const decoded = await auth.verifyIdToken(token);
     const userDoc = await db.collection("users").doc(decoded.uid).get();
     if (!userDoc.exists) return null;
-    const user = userDoc.data() as {
-      admin?: boolean;
-      scope?: string;
-      name?: string;
-      assignedCourses?: string[];
-    };
-    if (!user.admin || user.scope !== "super") return null;
-    return {
-      uid: decoded.uid,
-      admin: true,
-      scope: "super",
-      name: user.name,
-      assignedCourses: user.assignedCourses,
-    };
+    const user = userDoc.data()!;
+    if (!user.admin) return null;
+    return { uid: decoded.uid, ...user } as AdminUser;
   } catch {
     return null;
   }
 }
 
-export async function POST(req: NextRequest) {
-  const superAdmin = await verifySuperAdmin(req);
-  if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
-
+// GET /api/admin — list all admins (super only)
+export async function GET(req: NextRequest) {
+  const adminUser = await verifyAdmin(req);
+  if (!adminUser || adminUser.scope !== "super") {
+    return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  }
   try {
-    const { email, scope, assignedCourses } = await req.json();
-    if (!email || !scope) return NextResponse.json({ error: "Email and scope are required" }, { status: 400 });
-    if (!["super", "defined"].includes(scope)) return NextResponse.json({ error: "Scope must be super or defined" }, { status: 400 });
-
-    const userRecord = await auth.getUserByEmail(email);
-    const userDoc = await db.collection("users").doc(userRecord.uid).get();
-    if (!userDoc.exists) return NextResponse.json({ error: "User profile not found. They must register first." }, { status: 404 });
-
-    await db.collection("users").doc(userRecord.uid).update({
-      admin: true,
-      scope,
-      assignedCourses: assignedCourses || [],
-    });
-
-    // If defined admin is assigned to courses, update those course records too
-    if (scope === "defined" && assignedCourses?.length) {
-      for (const courseId of assignedCourses) {
-        const courseDoc = await db.collection("courses").doc(courseId).get();
-        if (courseDoc.exists) {
-          const existing = courseDoc.data()?.assignedAdmins || [];
-          if (!existing.includes(userRecord.uid)) {
-            await db.collection("courses").doc(courseId).update({
-              assignedAdmins: [...existing, userRecord.uid],
-            });
-          }
-        }
-      }
-    }
-
-    await db.collection("activityLog").add({
-      action: "grant_admin",
-      targetEmail: email,
-      targetUid: userRecord.uid,
-      scope,
-      adminUid: superAdmin.uid,
-      adminName: superAdmin.name,
-      timestamp: Date.now(),
-    });
-
-    return NextResponse.json({ success: true, uid: userRecord.uid });
-  } catch (error: unknown) {
-    const err = error as { code?: string };
-    if (err.code === "auth/user-not-found") {
-      return NextResponse.json({ error: "No account found with that email." }, { status: 404 });
-    }
-    console.error("Grant admin error:", error);
-    return NextResponse.json({ error: "Failed to grant admin access" }, { status: 500 });
+    const snap = await db.collection("users").where("admin", "==", true).get();
+    const admins = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    return NextResponse.json({ admins });
+  } catch (error) {
+    console.error("Get admins error:", error);
+    return NextResponse.json({ error: "Failed to fetch admins" }, { status: 500 });
   }
 }
 
-export async function DELETE(req: NextRequest) {
-  const superAdmin = await verifySuperAdmin(req);
-  if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
-
+// PATCH /api/admin — update an admin's scope or assignedCourses (super only)
+export async function PATCH(req: NextRequest) {
+  const adminUser = await verifyAdmin(req);
+  if (!adminUser || adminUser.scope !== "super") {
+    return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  }
   try {
-    const body = await req.json();
-    let uid = body.uid;
-
-    // Allow revoking by email
-    if (!uid && body.email) {
-      const userRecord = await auth.getUserByEmail(body.email);
-      uid = userRecord.uid;
+    const { uid, scope, assignedCourses } = await req.json();
+    if (!uid) return NextResponse.json({ error: "uid required" }, { status: 400 });
+    if (uid === adminUser.uid) {
+      return NextResponse.json({ error: "You cannot edit your own role." }, { status: 400 });
     }
 
-    if (!uid) return NextResponse.json({ error: "uid or email required" }, { status: 400 });
+    const update: Record<string, unknown> = {};
+    if (scope !== undefined) update.scope = scope;
+    if (assignedCourses !== undefined) {
+      update.assignedCourses = assignedCourses;
 
-    await db.collection("users").doc(uid).update({
-      admin: false,
-      scope: null,
-      assignedCourses: [],
-    });
+      // Sync assignedAdmins array on each course doc
+      const allCoursesSnap = await db.collection("courses").get();
+      const batch = db.batch();
 
-    await db.collection("activityLog").add({
-      action: "revoke_admin",
-      targetUid: uid,
-      adminUid: superAdmin.uid,
-      adminName: superAdmin.name,
-      timestamp: Date.now(),
-    });
+      for (const courseDoc of allCoursesSnap.docs) {
+        const courseData = courseDoc.data();
+        const currentAssigned: string[] = courseData.assignedAdmins || [];
+        const shouldBeAssigned = (assignedCourses as string[]).includes(courseDoc.id);
+        const isCurrentlyAssigned = currentAssigned.includes(uid);
 
+        if (shouldBeAssigned && !isCurrentlyAssigned) {
+          batch.update(courseDoc.ref, { assignedAdmins: [...currentAssigned, uid] });
+        } else if (!shouldBeAssigned && isCurrentlyAssigned) {
+          batch.update(courseDoc.ref, { assignedAdmins: currentAssigned.filter((id) => id !== uid) });
+        }
+      }
+      await batch.commit();
+    }
+
+    await db.collection("users").doc(uid).update(update);
     return NextResponse.json({ success: true });
-  } catch (error: unknown) {
-    const err = error as { code?: string };
-    if (err.code === "auth/user-not-found") {
-      return NextResponse.json({ error: "No account found with that email." }, { status: 404 });
+  } catch (error) {
+    console.error("Update admin error:", error);
+    return NextResponse.json({ error: "Failed to update admin" }, { status: 500 });
+  }
+}
+
+// DELETE /api/admin — revoke admin access (super only)
+export async function DELETE(req: NextRequest) {
+  const adminUser = await verifyAdmin(req);
+  if (!adminUser || adminUser.scope !== "super") {
+    return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  }
+  try {
+    const { uid } = await req.json();
+    if (!uid) return NextResponse.json({ error: "uid required" }, { status: 400 });
+    if (uid === adminUser.uid) {
+      return NextResponse.json({ error: "You cannot revoke your own access." }, { status: 400 });
     }
-    console.error("Revoke admin error:", error);
+    await db.collection("users").doc(uid).update({ admin: false, scope: null, assignedCourses: [] });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Delete admin error:", error);
     return NextResponse.json({ error: "Failed to revoke admin" }, { status: 500 });
   }
 }

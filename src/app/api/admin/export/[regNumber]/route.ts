@@ -5,7 +5,6 @@ interface AdminUser {
   uid: string;
   admin: boolean;
   scope?: "super" | "defined";
-  assignedCourses?: string[];
   [key: string]: unknown;
 }
 
@@ -51,7 +50,6 @@ export async function GET(
     const rows: Record<string, unknown>[] = [];
 
     for (const course of courses) {
-      // Scope check for defined admins
       if (adminUser.scope === "defined") {
         const assigned = (course.assignedAdmins as string[]) || [];
         if (!assigned.includes(adminUser.uid)) continue;
@@ -61,23 +59,28 @@ export async function GET(
         .collection("classes").doc(course.id).collection("sessions")
         .orderBy("createdAt", "asc").get();
 
-      for (const session of sessionsSnap.docs) {
-        const s = session.data();
+      for (const sessionDoc of sessionsSnap.docs) {
+        const s = sessionDoc.data();
+        const classId = sessionDoc.id;
+
         const recordDoc = await db
           .collection("students").doc(regNumber)
           .collection("attendance").doc(course.id)
-          .collection("records").doc(s.dateKey).get();
+          .collection("records").doc(classId).get();
+
+        const present = recordDoc.exists;
 
         rows.push({
           regNumber,
-          studentName: student.name,
+          studentName: student.name ?? "",
           courseCode: course.code,
           courseName: course.name,
-          classDate: s.dateKey,
-          attended: recordDoc.exists ? "Yes" : "No",
-          late: recordDoc.exists ? (recordDoc.data()?.late ? "Yes" : "No") : "-",
-          markedAt: recordDoc.exists
-            ? new Date(recordDoc.data()?.timestamp).toLocaleTimeString()
+          classDate: s.date ?? s.dateKey ?? "",
+          classId,
+          attended: present ? "Present" : "Absent",
+          late: present ? (recordDoc.data()?.late ? "Yes" : "No") : "-",
+          markedAt: present
+            ? new Date(recordDoc.data()!.timestamp as number).toLocaleTimeString()
             : "-",
         });
       }

@@ -1,6 +1,8 @@
 import Papa from "papaparse";
 import type jsPDF from "jspdf";
 
+// CSV colouring is not possible natively, so we just export raw data.
+// The "attended" column already contains "Present" or "Absent" for easy reading.
 export function exportCSV(rows: Record<string, unknown>[], filename: string) {
   const csv = Papa.unparse(rows);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -24,8 +26,8 @@ export async function exportPDF(
 
   const doc = new jsPDF({ orientation: "landscape" });
 
-  // Header
-  doc.setFillColor(22, 163, 74); // brand-600
+  // ── Header banner ──────────────────────────────────────────────────────────
+  doc.setFillColor(22, 163, 74);
   doc.rect(0, 0, doc.internal.pageSize.width, 18, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(13);
@@ -35,7 +37,7 @@ export async function exportPDF(
   doc.setFont("helvetica", "normal");
   doc.text("UNIZIK · Political Science Department", 14, 14);
 
-  // Title
+  // ── Report title ───────────────────────────────────────────────────────────
   doc.setTextColor(30, 41, 59);
   doc.setFontSize(11);
   doc.setFont("helvetica", "bold");
@@ -49,7 +51,7 @@ export async function exportPDF(
     doc.setTextColor(150, 150, 150);
     doc.text("No records found.", 14, 45);
   } else {
-    const headers = Object.keys(rows[0]);
+    const headers = Object.keys(rows[0]).filter((h) => h !== "classId"); // hide internal id
     const body = rows.map((r) => headers.map((h) => String(r[h] ?? "")));
 
     autoTable(doc, {
@@ -60,10 +62,26 @@ export async function exportPDF(
       headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: "bold" },
       alternateRowStyles: { fillColor: [240, 253, 244] },
       margin: { left: 14, right: 14 },
+      // ── Colour "attended" column cells ────────────────────────────────────
+      didParseCell(data) {
+        const attendedColIdx = headers.indexOf("attended");
+        if (data.section === "body" && data.column.index === attendedColIdx) {
+          const val = String(data.cell.raw ?? "");
+          if (val === "Present") {
+            data.cell.styles.fillColor = [220, 252, 231]; // green-100
+            data.cell.styles.textColor = [22, 101, 52];   // green-800
+            data.cell.styles.fontStyle = "bold";
+          } else if (val === "Absent") {
+            data.cell.styles.fillColor = [254, 226, 226]; // red-100
+            data.cell.styles.textColor = [153, 27, 27];   // red-800
+            data.cell.styles.fontStyle = "bold";
+          }
+        }
+      },
     });
   }
 
-  // Footer on each page
+  // ── Page footer ────────────────────────────────────────────────────────────
   const pageCount = (doc as jsPDF & { internal: { getNumberOfPages: () => number } }).internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);

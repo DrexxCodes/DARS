@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Button, Input, Badge, Skeleton, Select, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
-import { formatDisplayDate, formatTime } from "@/lib/utils";
+import { formatTime } from "@/lib/utils";
 import {
   PlayCircle, StopCircle, PauseCircle, PlayIcon,
   Plus, Clock, Users, BookOpen, Activity, MapPin, Trash2, AlertTriangle
@@ -15,11 +15,16 @@ import {
 interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; }
 interface GlobalState {
   classActive: boolean; checkinPaused: boolean;
-  startTime: number | null; endTime: number | null; currentDate: string | null;
+  startTime: number | null; endTime: number | null;
+  currentClassId: string | null;
   locationId?: string; locationName?: string;
 }
-interface Session { dateKey: string; totalPresence: number; startTime: number; endTime: number; startedBy: string; locationName?: string; }
-interface ActivityLog { id: string; action: string; courseId: string; adminName: string; timestamp: number; dateKey: string; }
+interface Session {
+  id: string; classId: string; date: string;
+  totalPresence: number; startTime: number; endTime: number;
+  startedBy: string; locationName?: string;
+}
+interface ActivityLog { id: string; action: string; courseId: string; adminName: string; timestamp: number; }
 interface LocationTag { id: string; name: string; isPrimary: boolean; }
 
 export default function AdminCreatePage() {
@@ -34,18 +39,22 @@ export default function AdminCreatePage() {
   const [loadingState, setLoadingState] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // New course form (super admin only)
+  // New course form
   const [showCourseForm, setShowCourseForm] = useState(false);
   const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "" });
   const [creatingCourse, setCreatingCourse] = useState(false);
 
-  // Location tags (for picking where a class is held when starting it)
+  // Locations
   const [locations, setLocations] = useState<LocationTag[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState("");
 
-  // Delete course (super admin only)
-  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  // Delete course dialog
+  const [showDeleteCourseDialog, setShowDeleteCourseDialog] = useState(false);
+  const [deletingCourse, setDeletingCourse] = useState(false);
+
+  // Delete single session dialog
+  const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
+  const [deletingSession, setDeletingSession] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -100,7 +109,6 @@ export default function AdminCreatePage() {
 
   useEffect(() => { if (selectedCourse) fetchCourseState(selectedCourse); }, [selectedCourse, fetchCourseState]);
 
-  // Poll every 15s when class is active
   useEffect(() => {
     if (!globalState?.classActive || !selectedCourse) return;
     const interval = setInterval(() => fetchCourseState(selectedCourse), 15_000);
@@ -139,7 +147,7 @@ export default function AdminCreatePage() {
 
   const handleDeleteCourse = async () => {
     if (!selectedCourse) return;
-    setDeleting(true);
+    setDeletingCourse(true);
     try {
       const token = await getToken();
       const res = await fetch("/api/classes", {
@@ -150,17 +158,33 @@ export default function AdminCreatePage() {
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Failed to delete course."); return; }
       toast.success("Course and all its data have been deleted.");
-      setShowDeleteDialog(false);
+      setShowDeleteCourseDialog(false);
       setSelectedCourse("");
       setGlobalState(null);
       setSessions([]);
       setActivityLog([]);
       fetchCourses();
-    } catch {
-      toast.error("Failed to delete course.");
-    } finally {
-      setDeleting(false);
-    }
+    } catch { toast.error("Failed to delete course."); } finally { setDeletingCourse(false); }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionToDelete || !selectedCourse) return;
+    setDeletingSession(true);
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/classes", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ courseId: selectedCourse, classId: sessionToDelete.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Failed to delete class."); return; }
+      toast.success(
+        `Class on ${sessionToDelete.date} deleted. ${data.studentsAffected} student record(s) removed.`
+      );
+      setSessionToDelete(null);
+      fetchCourseState(selectedCourse);
+    } catch { toast.error("Failed to delete class."); } finally { setDeletingSession(false); }
   };
 
   const handleCreateCourse = async () => {
@@ -181,8 +205,6 @@ export default function AdminCreatePage() {
       fetchCourses();
     } catch { toast.error("Failed to create course."); } finally { setCreatingCourse(false); }
   };
-
-  const actionLabel = { start: "Starting...", end: "Ending...", pause: "Pausing...", resume: "Resuming..." };
 
   if (authLoading || !profile?.admin) return null;
 
@@ -236,7 +258,7 @@ export default function AdminCreatePage() {
               <Button
                 size="sm" variant="danger" icon={<Trash2 className="w-3.5 h-3.5" />}
                 disabled={!!isActive}
-                onClick={() => setShowDeleteDialog(true)}
+                onClick={() => setShowDeleteCourseDialog(true)}
               >
                 Delete Course
               </Button>
@@ -284,14 +306,14 @@ export default function AdminCreatePage() {
                       </p>
                     )}
                   </div>
-                  {isActive && (
+                  {isActive && globalState?.currentClassId && (
                     <Badge variant={isPaused ? "yellow" : "green"}>
-                      {globalState?.currentDate}
+                      Live
                     </Badge>
                   )}
                 </div>
 
-                {/* Location picker — only relevant before starting a class */}
+                {/* Location picker */}
                 {!isActive && (
                   <div className="mb-5">
                     {locations.length === 0 ? (
@@ -319,7 +341,7 @@ export default function AdminCreatePage() {
                     <Button icon={<PlayCircle className="w-4 h-4" />}
                       loading={actionLoading === "start"} disabled={!locations.length}
                       onClick={() => doAction("start")}>
-                      {actionLoading === "start" ? actionLabel.start : "Start Class"}
+                      Start Class
                     </Button>
                   )}
                   {isActive && !isPaused && (
@@ -357,20 +379,31 @@ export default function AdminCreatePage() {
             ) : (
               <div className="space-y-2">
                 {sessions.map((s) => (
-                  <div key={s.dateKey} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-sm">
+                  <div key={s.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-sm">
                     <div className="flex items-center gap-2.5">
                       <Clock className="w-4 h-4 text-slate-400" />
                       <div>
-                        <p className="font-medium text-slate-900 dark:text-white">{formatDisplayDate(s.dateKey)}</p>
+                        <p className="font-medium text-slate-900 dark:text-white">{s.date}</p>
                         <p className="text-xs text-slate-400">
                           {formatTime(s.startTime)} – {formatTime(s.endTime)}
                           {s.locationName && <> · {s.locationName}</>}
                         </p>
                       </div>
                     </div>
-                    <Badge variant="green">
-                      <Users className="w-3 h-3 mr-1 inline" />{s.totalPresence}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="green">
+                        <Users className="w-3 h-3 mr-1 inline" />{s.totalPresence}
+                      </Badge>
+                      {profile.scope === "super" && (
+                        <button
+                          onClick={() => setSessionToDelete(s)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                          title="Delete this class"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -392,6 +425,7 @@ export default function AdminCreatePage() {
                       <span className={`w-2 h-2 rounded-full ${
                         log.action.includes("start") ? "bg-brand-500"
                           : log.action.includes("end") ? "bg-red-500"
+                          : log.action.includes("delete") ? "bg-orange-500"
                           : log.action.includes("pause") ? "bg-yellow-500"
                           : "bg-blue-500"
                       }`} />
@@ -409,10 +443,10 @@ export default function AdminCreatePage() {
         </>
       )}
 
-      {/* Delete course confirmation — super admin only */}
+      {/* Delete COURSE dialog */}
       <Dialog
-        open={showDeleteDialog}
-        onClose={() => setShowDeleteDialog(false)}
+        open={showDeleteCourseDialog}
+        onClose={() => setShowDeleteCourseDialog(false)}
         title="Delete Course"
         variant="danger"
         icon={<AlertTriangle className="w-5 h-5" />}
@@ -422,10 +456,33 @@ export default function AdminCreatePage() {
           and every class session, activity log entry, and student attendance record tied to it. This cannot be undone.
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+          <Button variant="outline" className="flex-1" onClick={() => setShowDeleteCourseDialog(false)}>Cancel</Button>
           <Button variant="danger" className="flex-1" icon={<Trash2 className="w-4 h-4" />}
-            loading={deleting} onClick={handleDeleteCourse}>
+            loading={deletingCourse} onClick={handleDeleteCourse}>
             Delete Permanently
+          </Button>
+        </div>
+      </Dialog>
+
+      {/* Delete single SESSION dialog */}
+      <Dialog
+        open={!!sessionToDelete}
+        onClose={() => setSessionToDelete(null)}
+        title="Delete Class Session"
+        variant="danger"
+        icon={<AlertTriangle className="w-5 h-5" />}
+      >
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-5">
+          This will permanently delete the class held on{" "}
+          <strong>{sessionToDelete?.date}</strong>. All student attendance records for this
+          specific class will be removed and their attendance percentages will be recalculated.
+          This cannot be undone.
+        </p>
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1" onClick={() => setSessionToDelete(null)}>Cancel</Button>
+          <Button variant="danger" className="flex-1" icon={<Trash2 className="w-4 h-4" />}
+            loading={deletingSession} onClick={handleDeleteSession}>
+            Delete Class
           </Button>
         </div>
       </Dialog>

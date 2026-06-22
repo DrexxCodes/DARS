@@ -5,7 +5,6 @@ interface AdminUser {
   uid: string;
   admin: boolean;
   scope?: "super" | "defined";
-  assignedCourses?: string[];
   [key: string]: unknown;
 }
 
@@ -14,6 +13,7 @@ interface Course {
   name: string;
   code: string;
   assignedAdmins?: string[];
+  totalClasses?: number;
 }
 
 interface Student {
@@ -46,11 +46,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const courseId = searchParams.get("courseId");
 
-    // Get all students
     const studentsSnap = await db.collection("students").orderBy("regNumber", "asc").get();
     const students: Student[] = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Student));
 
-    // Get courses (scoped to admin if defined)
     let coursesSnap: Course[];
     if (courseId) {
       const doc = await db.collection("courses").doc(courseId).get();
@@ -60,51 +58,47 @@ export async function GET(req: NextRequest) {
       coursesSnap = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
     }
 
-    // Scope filter for defined admins
     const courses = adminUser.scope === "defined"
       ? coursesSnap.filter((c) => ((c.assignedAdmins as string[]) || []).includes(adminUser.uid))
       : coursesSnap;
 
+    // rows shape: one row per student per course per class session
+    // attended cell is "Present" | "Absent" so the client can colour it
     const rows: Record<string, unknown>[] = [];
 
-    for (const student of students) {
-      for (const course of courses) {
-        const sessionsSnap = await db
-          .collection("classes").doc(course.id).collection("sessions")
-          .orderBy("createdAt", "asc").get();
+    for (const course of courses) {
+      // Fetch all sessions for this course ordered chronologically
+      const sessionsSnap = await db
+        .collection("classes").doc(course.id).collection("sessions")
+        .orderBy("createdAt", "asc").get();
 
-        const totalSessions = sessionsSnap.size;
-        let attended = 0;
-        let lateCount = 0;
+      for (const student of students) {
+        for (const sessionDoc of sessionsSnap.docs) {
+          const s = sessionDoc.data();
+          const classId = sessionDoc.id;
 
-        for (const session of sessionsSnap.docs) {
-          const s = session.data();
           const recordDoc = await db
             .collection("students").doc(student.id)
             .collection("attendance").doc(course.id)
-            .collection("records").doc(s.dateKey).get();
+            .collection("records").doc(classId).get();
 
-          if (recordDoc.exists) {
-            attended++;
-            if (recordDoc.data()?.late) lateCount++;
-          }
+          const present = recordDoc.exists;
 
           rows.push({
             regNumber: student.id,
-            studentName: student.name,
+            studentName: student.name ?? "",
             courseCode: course.code,
             courseName: course.name,
-            classDate: s.dateKey,
-            attended: recordDoc.exists ? "Yes" : "No",
-            late: recordDoc.exists ? (recordDoc.data()?.late ? "Yes" : "No") : "-",
-            markedAt: recordDoc.exists
-              ? new Date(recordDoc.data()?.timestamp).toLocaleTimeString()
+            classDate: s.date ?? s.dateKey ?? "",
+            classId,
+            // "Present" / "Absent" lets the frontend/client apply colours
+            attended: present ? "Present" : "Absent",
+            late: present ? (recordDoc.data()?.late ? "Yes" : "No") : "-",
+            markedAt: present
+              ? new Date(recordDoc.data()!.timestamp as number).toLocaleTimeString()
               : "-",
           });
         }
-
-        // Summary row per student per course
-        void attended; void lateCount; void totalSessions;
       }
     }
 

@@ -1,4 +1,11 @@
-const EARTH_RADIUS_METERS = 6371000;
+const EARTH_RADIUS_METERS = 6371000; /** According to what they said sha
+ * 
+ * @param lat1 
+ * @param lng1 
+ * @param lat2 
+ * @param lng2 
+ * @returns 
+ */
 
 /**
  * Great-circle distance between two lat/lng points, in meters.

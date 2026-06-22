@@ -30,13 +30,11 @@ export async function GET(req: NextRequest) {
     const all = searchParams.get("all");
 
     if (all) {
-      // Return all courses (for admin views)
       const snap = await db.collection("courses").orderBy("createdAt", "desc").get();
       const courses = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       return NextResponse.json({ courses });
     }
 
-    // Return active courses for mark page
     const snap = await db.collection("courses").where("active", "==", true).get();
     const courses = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return NextResponse.json({ courses });
@@ -65,16 +63,17 @@ export async function POST(req: NextRequest) {
       description: description || "",
       assignedAdmins: [],
       active: true,
+      totalClasses: 0,   // ← denormalized counter
       createdAt: now,
       createdBy: admin.uid,
     });
 
-    // Initialize globals for this course
+    // Init globals for this course
     await db.collection("globals").doc(ref.id).set({
       courseId: ref.id,
       classActive: false,
       checkinPaused: false,
-      currentDate: null,
+      currentClassId: null,
       startTime: null,
       endTime: null,
     });

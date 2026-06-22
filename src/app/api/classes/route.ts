@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
-import { format } from "date-fns";
+import { FieldValue } from "firebase-admin/firestore";
 
 interface AdminUser {
   uid: string;
@@ -26,6 +26,7 @@ async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
   }
 }
 
+// ─── POST: start | end | pause | resume ───────────────────────────────────────
 export async function POST(req: NextRequest) {
   const adminUser = await verifyAdmin(req);
   if (!adminUser) {
@@ -35,19 +36,16 @@ export async function POST(req: NextRequest) {
   try {
     const { action, courseId, locationId } = await req.json();
 
-    // Check admin is assigned to this course (or is super admin)
     if (adminUser.scope === "defined") {
       const courseDoc = await db.collection("courses").doc(courseId).get();
       if (!courseDoc.exists) return NextResponse.json({ error: "Course not found" }, { status: 404 });
-      const course = courseDoc.data()!;
-      if (!course.assignedAdmins?.includes(adminUser.uid)) {
+      if (!courseDoc.data()!.assignedAdmins?.includes(adminUser.uid)) {
         return NextResponse.json({ error: "You are not assigned to this course" }, { status: 403 });
       }
     }
 
     const globalRef = db.collection("globals").doc(courseId);
     const now = Date.now();
-    const dateKey = format(new Date(), "yyyy-MM-dd");
 
     if (action === "start") {
       const globalDoc = await globalRef.get();
@@ -55,8 +53,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "A class is already active for this course." }, { status: 400 });
       }
 
-      // Resolve the location this class will be held at. If none was
-      // explicitly chosen, fall back to whichever location is marked primary.
+      // Resolve location
       const locationsCol = db.collection("globals").doc("locationConfig").collection("locations");
       let locationDoc;
       if (locationId) {
@@ -76,50 +73,57 @@ export async function POST(req: NextRequest) {
       }
       const location = locationDoc.data()!;
 
-      const startTime = now;
       const endTime = now + 2 * 60 * 60 * 1000;
 
-      // Create session document
-      const sessionRef = db.collection("classes").doc(courseId).collection("sessions").doc(dateKey);
+      // Auto-generate a unique class ID (so same course can run multiple days)
+      const sessionRef = db.collection("classes").doc(courseId).collection("sessions").doc();
+      const classId = sessionRef.id;
+
       await sessionRef.set({
+        classId,
         courseId,
-        dateKey,
-        startTime,
+        date: new Date().toISOString().split("T")[0], // stored for display/grouping
+        startTime: now,
         endTime,
         totalPresence: 0,
         startedBy: adminUser.uid,
         createdAt: now,
         locationId: locationDoc.id,
         locationName: location.name,
-      }, { merge: true });
+      });
 
-      // Update globals
+      // Increment totalClasses counter on the course doc
+      await db.collection("courses").doc(courseId).update({
+        totalClasses: FieldValue.increment(1),
+      });
+
+      // Update globals — currentClassId drives all mark-page logic
       await globalRef.update({
         classActive: true,
         checkinPaused: false,
-        currentDate: dateKey,
-        startTime,
+        currentClassId: classId,
+        startTime: now,
         endTime,
         locationId: locationDoc.id,
         locationName: location.name,
       });
 
-      // Log activity
       await db.collection("activityLog").add({
         action: "start_class",
         courseId,
-        dateKey,
+        classId,
         adminUid: adminUser.uid,
         adminName: adminUser.name,
         timestamp: now,
       });
 
-      return NextResponse.json({ success: true, startTime, endTime, dateKey, locationName: location.name });
+      return NextResponse.json({ success: true, classId, startTime: now, endTime, locationName: location.name });
 
     } else if (action === "end") {
       await globalRef.update({
         classActive: false,
         checkinPaused: false,
+        currentClassId: null,
         startTime: null,
         endTime: null,
       });
@@ -127,7 +131,6 @@ export async function POST(req: NextRequest) {
       await db.collection("activityLog").add({
         action: "end_class",
         courseId,
-        dateKey,
         adminUid: adminUser.uid,
         adminName: adminUser.name,
         timestamp: now,
@@ -140,7 +143,6 @@ export async function POST(req: NextRequest) {
       await db.collection("activityLog").add({
         action: "pause_checkin",
         courseId,
-        dateKey,
         adminUid: adminUser.uid,
         adminName: adminUser.name,
         timestamp: now,
@@ -152,7 +154,6 @@ export async function POST(req: NextRequest) {
       await db.collection("activityLog").add({
         action: "resume_checkin",
         courseId,
-        dateKey,
         adminUid: adminUser.uid,
         adminName: adminUser.name,
         timestamp: now,
@@ -167,6 +168,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// ─── GET: list sessions for a course ──────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -176,7 +178,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "courseId required" }, { status: 400 });
     }
 
-    // Get all sessions for a course
     const snap = await db
       .collection("classes")
       .doc(courseId)
@@ -192,7 +193,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// Firestore batches are capped at 500 writes — delete in chunks.
+// ─── Batch delete helper ───────────────────────────────────────────────────────
 async function deleteInBatches(refs: FirebaseFirestore.DocumentReference[]) {
   const CHUNK = 450;
   for (let i = 0; i < refs.length; i += CHUNK) {
@@ -202,10 +203,11 @@ async function deleteInBatches(refs: FirebaseFirestore.DocumentReference[]) {
   }
 }
 
-// DELETE — permanently remove a course and every trace of it from Firestore:
-// the course doc, its globals doc, all class sessions, all activity log
-// entries, and every student's attendance records for that course. Super
-// admin only — this is irreversible.
+// ─── DELETE: remove a single class session OR an entire course ────────────────
+//
+//  Body shapes:
+//    { courseId, classId }  → delete one session + its student attendance records
+//    { courseId }           → delete the entire course (super admin only)
 export async function DELETE(req: NextRequest) {
   const adminUser = await verifyAdmin(req);
   if (!adminUser || adminUser.scope !== "super") {
@@ -213,26 +215,79 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const { courseId } = await req.json();
+    const { courseId, classId } = await req.json();
     if (!courseId) return NextResponse.json({ error: "courseId is required" }, { status: 400 });
 
+    // ── Delete a single class session ──────────────────────────────────────────
+    if (classId) {
+      const sessionRef = db.collection("classes").doc(courseId).collection("sessions").doc(classId);
+      const sessionDoc = await sessionRef.get();
+      if (!sessionDoc.exists) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+
+      const sessionData = sessionDoc.data()!;
+      const now = Date.now();
+
+      // Find every student who has an attendance record keyed by this classId
+      // Records are stored at students/{reg}/attendance/{courseId}/records/{classId}
+      const studentsSnap = await db.collection("students").get();
+      const attendanceRefs: FirebaseFirestore.DocumentReference[] = [];
+
+      for (const studentDoc of studentsSnap.docs) {
+        const recordRef = studentDoc.ref
+          .collection("attendance")
+          .doc(courseId)
+          .collection("records")
+          .doc(classId);
+        const recordSnap = await recordRef.get();
+        if (recordSnap.exists) {
+          attendanceRefs.push(recordRef);
+          // Decrement the student's totalPresence
+          await studentDoc.ref.update({ totalPresence: FieldValue.increment(-1) });
+        }
+      }
+
+      if (attendanceRefs.length) await deleteInBatches(attendanceRefs);
+
+      // Delete the session itself
+      await sessionRef.delete();
+
+      // Decrement totalClasses on the course doc
+      await db.collection("courses").doc(courseId).update({
+        totalClasses: FieldValue.increment(-1),
+      });
+
+      await db.collection("activityLog").add({
+        action: "delete_class",
+        courseId,
+        classId,
+        date: sessionData.date,
+        studentsAffected: attendanceRefs.length,
+        adminUid: adminUser.uid,
+        adminName: adminUser.name,
+        timestamp: now,
+      });
+
+      return NextResponse.json({ success: true, studentsAffected: attendanceRefs.length });
+    }
+
+    // ── Delete the entire course ───────────────────────────────────────────────
     const courseRef = db.collection("courses").doc(courseId);
     const courseDoc = await courseRef.get();
     if (!courseDoc.exists) return NextResponse.json({ error: "Course not found" }, { status: 404 });
 
-    // 1. Delete all sessions under classes/{courseId}/sessions
+    // 1. Delete all sessions
     const sessionsSnap = await db.collection("classes").doc(courseId).collection("sessions").get();
     await deleteInBatches(sessionsSnap.docs.map((d) => d.ref));
     await db.collection("classes").doc(courseId).delete().catch(() => {});
 
-    // 2. Delete the globals/{courseId} doc
+    // 2. Delete globals doc
     await db.collection("globals").doc(courseId).delete().catch(() => {});
 
-    // 3. Delete activityLog entries for this course
+    // 3. Delete activityLog entries
     const logSnap = await db.collection("activityLog").where("courseId", "==", courseId).get();
     await deleteInBatches(logSnap.docs.map((d) => d.ref));
 
-    // 4. Delete every student's attendance/{courseId}/records subcollection
+    // 4. Delete every student's attendance for this course
     const studentsSnap = await db.collection("students").get();
     const attendanceRefs: FirebaseFirestore.DocumentReference[] = [];
     for (const studentDoc of studentsSnap.docs) {
@@ -246,7 +301,7 @@ export async function DELETE(req: NextRequest) {
     }
     if (attendanceRefs.length) await deleteInBatches(attendanceRefs);
 
-    // 5. Finally, delete the course doc itself
+    // 5. Delete the course doc
     await courseRef.delete();
 
     await db.collection("activityLog").add({
@@ -260,7 +315,7 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Delete course error:", error);
-    return NextResponse.json({ error: "Failed to delete course" }, { status: 500 });
+    console.error("Delete error:", error);
+    return NextResponse.json({ error: "Delete failed" }, { status: 500 });
   }
 }
