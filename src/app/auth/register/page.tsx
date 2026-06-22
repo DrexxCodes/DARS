@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card, Button, Input } from "@/components/ui";
 import { toast } from "sonner";
 import Link from "next/link";
+import Image from "next/image";
 import { CheckSquare, Eye, EyeOff } from "lucide-react";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
 
@@ -65,8 +66,15 @@ export default function RegisterPage() {
     <div className="flex-1 flex items-center justify-center p-4 py-10">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-brand-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <CheckSquare className="w-7 h-7 text-white" />
+          <div className="w-14 h-14 rounded-2xl overflow-hidden mx-auto mb-4 shadow-lg">
+            <Image
+              src="/icon.png"
+              alt="DARS"
+              width={56}
+              height={56}
+              className="w-full h-full object-cover"
+              priority
+            />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Create Account</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">

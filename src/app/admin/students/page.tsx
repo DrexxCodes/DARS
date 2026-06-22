@@ -79,14 +79,16 @@ export default function StudentSearchPage() {
 
       <Card className="p-5">
         <div className="flex gap-2">
-          <Input
-            placeholder="e.g. 2023133001"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            icon={<Search className="w-4 h-4" />}
-            className="flex-1"
-          />
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Input
+              placeholder="e.g. 2023133001"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              className="w-full pl-10"
+            />
+          </div>
           <Button loading={searching} onClick={handleSearch}>Search</Button>
         </div>
       </Card>

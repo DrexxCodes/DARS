@@ -133,7 +133,6 @@ export default function AdminManagePage() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            icon={<Mail className="w-4 h-4" />}
             className="flex-1"
           />
           <Button loading={addingAdmin} onClick={addAdmin}>Grant Access</Button>
@@ -167,11 +166,11 @@ export default function AdminManagePage() {
                     </Badge>
                     {admin.uid !== profile.uid && (
                       <>
-                        <Button size="xs" variant="outline" icon={<UserCog className="w-3.5 h-3.5" />}
+                        <Button size="sm" variant="outline" icon={<UserCog className="w-3.5 h-3.5" />}
                           onClick={() => editingUid === admin.uid ? setEditingUid(null) : startEdit(admin)}>
                           {editingUid === admin.uid ? "Cancel" : "Edit Role"}
                         </Button>
-                        <Button size="xs" variant="danger" icon={<ShieldOff className="w-3.5 h-3.5" />}
+                        <Button size="sm" variant="danger" icon={<ShieldOff className="w-3.5 h-3.5" />}
                           onClick={() => revokeAdmin(admin.uid)}>
                           Revoke
                         </Button>

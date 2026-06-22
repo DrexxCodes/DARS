@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 
 interface Course {
+  totalClasses: number;
   id: string;
   name: string;
   code: string;
