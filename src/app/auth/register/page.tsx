@@ -43,7 +43,7 @@ export default function RegisterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.name.trim(),
-          email: form.email,
+          email: form.email.trim().toLowerCase(),
           regNumber: normalizeRegNumber(form.regNumber),
           password: form.password,
         }),

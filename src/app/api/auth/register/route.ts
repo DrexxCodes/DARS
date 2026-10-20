@@ -4,7 +4,23 @@ import { REG_NUMBER_REGEX } from "@/lib/utils";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password, name, regNumber } = await req.json();
+    const body = await req.json();
+    const { password, name, regNumber } = body;
+    const email: string = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+
+    // Sign-in uses the NEXT_PUBLIC_* client config, signup uses the service account.
+    // If they point at different Firebase projects, users are created in one project and
+    // looked up in another -> "invalid email or password" on every login.
+    if (
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_PROJECT_ID &&
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID !== process.env.FIREBASE_PROJECT_ID
+    ) {
+      console.error(
+        "FIREBASE PROJECT MISMATCH: admin =", process.env.FIREBASE_PROJECT_ID,
+        "client =", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
+      );
+    }
 
     if (!email || !password || !name || !regNumber) {
       return NextResponse.json({ error: "All fields are required." }, { status: 400 });

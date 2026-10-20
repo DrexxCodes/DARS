@@ -5,6 +5,9 @@ import { rateLimit } from "@/lib/rate-limit";
 import { REG_NUMBER_REGEX, isClassExpired, isLateAttendance } from "@/lib/utils";
 import { distanceInMeters } from "@/lib/geo";
 
+// Reject fixes less precise than this (IP/cell-tower based fixes are often 1km+ off).
+const MAX_ACCURACY_METERS = 150;
+
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
   const { allowed } = rateLimit(ip, 20, 60_000);
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
     if (!callerDoc.exists) return NextResponse.json({ error: "Account not found." }, { status: 404 });
     const caller = callerDoc.data()!;
 
-    const { courseId, lat, lng, regNumber: targetRegNumber } = await req.json();
+    const { courseId, lat, lng, accuracy, regNumber: targetRegNumber } = await req.json();
     if (!courseId) return NextResponse.json({ error: "Course is required." }, { status: 400 });
 
     let normalized: string;
@@ -69,23 +72,41 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No active class session found.", code: "CLASS_INACTIVE" }, { status: 400 });
     }
 
-    // 3. Location check
-    if (global.locationId) {
-      if (typeof lat !== "number" || typeof lng !== "number") {
-        return NextResponse.json({ error: "Location access is required to mark attendance.", code: "LOCATION_REQUIRED" }, { status: 400 });
-      }
-      const locationDoc = await db
-        .collection("globals").doc("locationConfig").collection("locations").doc(global.locationId).get();
-      if (locationDoc.exists) {
-        const location = locationDoc.data()!;
-        const distance = distanceInMeters(lat, lng, location.lat, location.lng);
-        if (distance > location.radiusMeters) {
-          return NextResponse.json(
-            { error: `You must be at ${location.name} to mark attendance.`, code: "OUT_OF_RANGE" },
-            { status: 403 }
-          );
-        }
-      }
+    // 3. Location check — FAILS CLOSED: a class with no usable location can't be marked.
+    if (!global.locationId) {
+      return NextResponse.json(
+        { error: "This class has no location set. Ask your lecturer to restart it.", code: "LOCATION_NOT_CONFIGURED" },
+        { status: 400 }
+      );
+    }
+    const validCoords =
+      typeof lat === "number" && typeof lng === "number" &&
+      Number.isFinite(lat) && Number.isFinite(lng) &&
+      Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    if (!validCoords) {
+      return NextResponse.json({ error: "Location access is required to mark attendance.", code: "LOCATION_REQUIRED" }, { status: 400 });
+    }
+    if (typeof accuracy !== "number" || !Number.isFinite(accuracy) || accuracy > MAX_ACCURACY_METERS) {
+      return NextResponse.json(
+        { error: "Your location signal is too weak/imprecise. Turn on GPS (high accuracy), step outside or near a window, and try again.", code: "LOW_ACCURACY" },
+        { status: 400 }
+      );
+    }
+    const locationDoc = await db
+      .collection("globals").doc("locationConfig").collection("locations").doc(global.locationId).get();
+    if (!locationDoc.exists) {
+      return NextResponse.json(
+        { error: "This class's location tag no longer exists. Ask your lecturer to restart the class.", code: "LOCATION_NOT_CONFIGURED" },
+        { status: 400 }
+      );
+    }
+    const location = locationDoc.data()!;
+    const distance = distanceInMeters(lat, lng, location.lat, location.lng);
+    if (distance > location.radiusMeters) {
+      return NextResponse.json(
+        { error: `You must be at ${location.name} to mark attendance.`, code: "OUT_OF_RANGE" },
+        { status: 403 }
+      );
     }
 
     // 4. Student exists?
@@ -117,7 +138,8 @@ export async function POST(req: NextRequest) {
     // 7. Atomic write
     const batch = db.batch();
 
-    batch.set(attendanceRef, {
+    // create() (not set()) so two simultaneous requests can't both succeed and double-count
+    batch.create(attendanceRef, {
       timestamp: now,
       courseId,
       classId,
@@ -134,7 +156,14 @@ export async function POST(req: NextRequest) {
     // Increment on student record
     batch.update(db.collection("students").doc(normalized), { totalPresence: FieldValue.increment(1) });
 
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (e) {
+      if ((e as { code?: number }).code === 6) {
+        return NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 });
+      }
+      throw e;
+    }
 
     return NextResponse.json({ success: true, name: student.name, late, timestamp: now });
   } catch (error) {

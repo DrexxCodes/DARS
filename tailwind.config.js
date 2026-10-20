@@ -33,6 +33,8 @@ module.exports = {
         "fade-in": "fadeIn 0.4s ease-in-out forwards",
         "slide-up": "slideUp 0.4s ease-out forwards",
         "pulse-green": "pulseGreen 2s ease-in-out infinite",
+        "sheet-up": "sheetUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+        float: "float 3s ease-in-out infinite",
       },
       keyframes: {
         drawCheck: {
@@ -50,6 +52,14 @@ module.exports = {
         slideUp: {
           "0%": { transform: "translateY(20px)", opacity: "0" },
           "100%": { transform: "translateY(0)", opacity: "1" },
+        },
+        sheetUp: {
+          "0%": { transform: "translateY(100%)" },
+          "100%": { transform: "translateY(0)" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-8px)" },
         },
         pulseGreen: {
           "0%, 100%": { boxShadow: "0 0 0 0 rgba(34, 197, 94, 0.4)" },

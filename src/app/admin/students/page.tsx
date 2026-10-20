@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { Card, Button, Input, Badge, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
+import { getAttendanceStatus } from "@/lib/utils";
 import { toast } from "sonner";
 import { Search, Lock, BookOpen, TrendingUp, User } from "lucide-react";
 
@@ -119,14 +120,8 @@ export default function StudentSearchPage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Your Courses</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {assignedCourses.map((c) => {
-                  const colour =
-                    c.total === 0
-                      ? "bg-slate-100 dark:bg-slate-800"
-                      : c.percentage >= 75
-                      ? "bg-brand-50 dark:bg-brand-950"
-                      : c.percentage >= 50
-                      ? "bg-yellow-50 dark:bg-yellow-950"
-                      : "bg-red-50 dark:bg-red-950";
+                  const status = getAttendanceStatus(c.percentage, c.total);
+                  const colour = status.card;
 
                   return (
                     <Card key={c.courseId} className={`p-4 space-y-3 ${colour}`}>
@@ -137,15 +132,8 @@ export default function StudentSearchPage() {
                             {c.courseCode}
                           </span>
                         </div>
-                        <Badge
-                          variant={
-                            c.total === 0 ? "slate"
-                              : c.percentage >= 75 ? "green"
-                              : c.percentage >= 50 ? "yellow"
-                              : "red"
-                          }
-                        >
-                          {c.total === 0 ? "No classes yet" : `${c.percentage}%`}
+                        <Badge variant={status.badge}>
+                          {c.total === 0 ? status.label : `${c.percentage}% · ${status.label}`}
                         </Badge>
                       </div>
                       <p className="text-sm font-semibold text-slate-900 dark:text-white leading-tight">
@@ -159,11 +147,7 @@ export default function StudentSearchPage() {
                         {c.total > 0 && (
                           <div className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all ${
-                                c.percentage >= 75 ? "bg-brand-500"
-                                  : c.percentage >= 50 ? "bg-yellow-500"
-                                  : "bg-red-500"
-                              }`}
+                              className={`h-full rounded-full transition-all ${status.bar}`}
                               style={{ width: `${Math.min(c.percentage, 100)}%` }}
                             />
                           </div>

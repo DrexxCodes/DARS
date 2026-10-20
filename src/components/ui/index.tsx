@@ -60,7 +60,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
 // ─── Badge ────────────────────────────────────────────────────────────────────
 interface BadgeProps {
   children: ReactNode;
-  variant?: "green" | "yellow" | "red" | "blue" | "slate";
+  variant?: "green" | "yellow" | "red" | "blue" | "slate" | "orange" | "critical";
 }
 
 export function Badge({ children, variant = "green" }: BadgeProps) {
@@ -70,6 +70,8 @@ export function Badge({ children, variant = "green" }: BadgeProps) {
     red: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
     blue: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
     slate: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+    orange: "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300",
+    critical: "bg-red-600 text-white dark:bg-red-700",
   };
   return (
     <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium", variants[variant])}>

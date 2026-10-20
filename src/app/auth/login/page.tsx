@@ -31,15 +31,20 @@ export default function LoginPage() {
     if (!validate()) return;
     setLoading(true);
     try {
-      await login(email, password, rememberMe);
+      await login(email.trim().toLowerCase(), password, rememberMe);
       toast.success("Welcome back!");
       router.push("/dashboard");
     } catch (err: unknown) {
       const e = err as { code?: string };
+      console.error("Login error:", e.code, err);
       if (e.code === "auth/invalid-credential" || e.code === "auth/wrong-password") {
-        toast.error("Invalid email or password.");
+        toast.error(`Invalid email or password.${process.env.NODE_ENV === "development" ? ` (${e.code})` : ""}`);
       } else if (e.code === "auth/too-many-requests") {
         toast.error("Too many attempts. Please try again later.");
+      } else if (e.code === "auth/profile-missing") {
+        toast.error("Account profile not found. Please contact an admin.");
+      } else if (e.code === "auth/user-banned") {
+        toast.error("This account has been suspended.");
       } else {
         toast.error("Login failed. Please try again.");
       }

@@ -3,5 +3,8 @@ dist/
 
 .env
 .env.local.example
+.env.local
 
 .next
+
+scripts/

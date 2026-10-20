@@ -181,8 +181,6 @@ export default function MarkPage() {
               <MarkButton
                 courseId={selectedCourse}
                 courseName={selectedCourseName}
-                lat={location.lat}
-                lng={location.lng}
                 onSuccess={(result) => setSuccess(result)}
                 onNotFound={() => setDialog("not_found")}
               />

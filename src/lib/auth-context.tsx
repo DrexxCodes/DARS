@@ -36,27 +36,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = useCallback(async (uid: string) => {
+  const fetchProfile = useCallback(async (firebaseUser: User): Promise<UserProfile | null> => {
     try {
-      const res = await fetch(`/api/users/${uid}`);
+      const token = await firebaseUser.getIdToken();
+      const res = await fetch(`/api/users/${firebaseUser.uid}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (res.ok) {
         const data = await res.json();
         setProfile(data.user);
+        return data.user as UserProfile;
       }
+      setProfile(null);
+      return null;
     } catch {
       setProfile(null);
+      return null;
     }
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (user) await fetchProfile(user.uid);
+    if (user) await fetchProfile(user);
   }, [user, fetchProfile]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(clientAuth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        await fetchProfile(firebaseUser.uid);
+        // Keep "loading" true until the profile arrives, otherwise pages see
+        // (loading=false, profile=null) and bounce the user back to /auth/login.
+        setLoading(true);
+        await fetchProfile(firebaseUser);
       } else {
         setProfile(null);
       }
@@ -67,7 +77,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (email: string, password: string, rememberMe: boolean) => {
     await setAuthPersistence(rememberMe);
-    await signInWithEmailAndPassword(clientAuth, email, password);
+    const cred = await signInWithEmailAndPassword(clientAuth, email, password);
+    // Load the profile before resolving so the redirect lands on a ready session
+    const p = await fetchProfile(cred.user);
+    if (!p) {
+      await signOut(clientAuth);
+      throw Object.assign(new Error("Profile not found"), { code: "auth/profile-missing" });
+    }
+    if (p.banned) {
+      await signOut(clientAuth);
+      throw Object.assign(new Error("Account banned"), { code: "auth/user-banned" });
+    }
   };
 
   const logout = async () => {

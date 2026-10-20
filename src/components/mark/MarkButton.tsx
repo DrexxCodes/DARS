@@ -5,18 +5,18 @@ import { Button, Input } from "@/components/ui";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { clientAuth } from "@/lib/firebase-client";
+import { getFreshPosition } from "@/lib/geolocation-client";
+import { haptic } from "@/lib/haptics";
 import { CheckCircle2, UserCog } from "lucide-react";
 
 interface MarkButtonProps {
   courseId: string;
   courseName: string;
-  lat: number;
-  lng: number;
   onSuccess: (result: { name: string; late: boolean; timestamp: number }) => void;
   onNotFound: () => void;
 }
 
-export default function MarkButton({ courseId, courseName, lat, lng, onSuccess, onNotFound }: MarkButtonProps) {
+export default function MarkButton({ courseId, courseName, onSuccess, onNotFound }: MarkButtonProps) {
   const { profile } = useAuth();
   const isAdmin = profile?.admin === true;
 
@@ -27,6 +27,7 @@ export default function MarkButton({ courseId, courseName, lat, lng, onSuccess, 
 
   const handleMark = async () => {
     setError("");
+    haptic(8); // instant tap feedback (also satisfies iOS's need for a direct tap)
 
     let regNumber: string | undefined;
     if (isAdmin && useOverride) {
@@ -40,6 +41,20 @@ export default function MarkButton({ courseId, courseName, lat, lng, onSuccess, 
 
     setLoading(true);
     try {
+      // Take a fresh GPS fix at the moment of marking (not the one from page load)
+      let fix;
+      try {
+        fix = await getFreshPosition();
+      } catch (e) {
+        const kind = (e as { kind?: string }).kind;
+        setError(
+          kind === "denied"
+            ? "Location access was denied. Enable it in your browser's site settings and try again."
+            : "Couldn't get your location. Turn on GPS/location services and try again."
+        );
+        return;
+      }
+
       const token = await clientAuth.currentUser?.getIdToken();
       const res = await fetch("/api/mark", {
         method: "POST",
@@ -47,7 +62,7 @@ export default function MarkButton({ courseId, courseName, lat, lng, onSuccess, 
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ courseId, lat, lng, ...(regNumber ? { regNumber } : {}) }),
+        body: JSON.stringify({ courseId, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, ...(regNumber ? { regNumber } : {}) }),
       });
 
       const data = await res.json();
@@ -58,10 +73,12 @@ export default function MarkButton({ courseId, courseName, lat, lng, onSuccess, 
       }
 
       if (!res.ok) {
+        haptic([60, 40, 60]);
         setError(data.error || "Something went wrong. Please try again.");
         return;
       }
 
+      haptic([30, 60, 30]);
       onSuccess({ name: data.name, late: data.late, timestamp: data.timestamp });
       setOverrideReg("");
     } catch {

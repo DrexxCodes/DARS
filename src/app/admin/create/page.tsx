@@ -251,7 +251,7 @@ export default function AdminCreatePage() {
             label="Select Course"
             value={selectedCourse}
             onChange={(e) => setSelectedCourse(e.target.value)}
-            options={courses.map((c) => ({ value: c.id, label: `${c.code} — ${c.name}` }))}
+            options={courses.map((c) => ({ value: c.id, label: `${c.code} - ${c.name}` }))}
           />
           {profile.scope === "super" && selectedCourse && (
             <div className="flex justify-end">

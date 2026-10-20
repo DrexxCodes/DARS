@@ -181,6 +181,13 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    // Don't let a location be deleted while a live class is using it
+    const inUse = await db.collection("globals")
+      .where("locationId", "==", id).where("classActive", "==", true).limit(1).get();
+    if (!inUse.empty) {
+      return NextResponse.json({ error: "A class is currently running at this location. End it first." }, { status: 400 });
+    }
+
     await ref.delete();
     return NextResponse.json({ success: true });
   } catch (error) {

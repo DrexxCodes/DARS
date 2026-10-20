@@ -1,5 +1,26 @@
 # DARS Changelog
 
+## v2.0.1 — Fix: offline screen not showing in the PWA
+
+### Root cause
+- `next-pwa@5` is webpack-only; Next 16 builds with Turbopack, so the plugin never generated a working service worker. With no worker, the browser showed its default "This site can't be reached" page.
+- Even when a worker was generated, `fallbacks.document: "/offline"` pointed at a client-rendered Next route whose JS chunks weren't guaranteed to be cached.
+
+### Changes
+- **`public/sw.js`** (new): hand-written service worker. Precaches `/offline.html` + icons, network-first navigations with offline fallback, cache-first for `/_next/static/*`, never touches `/api/*`. Uses navigation preload and cleans up old workbox caches on activate.
+- **`public/offline.html`** (new): self-contained offline page (inline CSS/JS, no Next chunks) with the same design, jokes and "Check connection" flow; follows the app's light/dark theme; reloads the original URL once back online.
+- **`src/components/pwa/ServiceWorkerRegister.tsx`** (new): registers the worker in production only.
+- **`src/app/layout.tsx`**: mounts `ServiceWorkerRegister`.
+- **`next.config.js`**: removed `next-pwa`; added no-cache headers for `/sw.js` and `/offline.html`.
+- **`package.json`**: removed `next-pwa` and `babel-loader` (unused). Run `pnpm install` / `npm install` to refresh lockfiles.
+- **`src/app/layout.tsx`**: manifest link now rendered manually with `crossOrigin="use-credentials"` so the manifest loads through ngrok-free's interstitial (Chrome showed "This app cannot be installed" with a placeholder "N" icon).
+- **`InstallPrompt.tsx`**: install sheet now appears on every page load/reload until the app is installed. "Maybe later"/close/Esc hide it for the current page view only (7-day snooze removed). Stale "installed" flag is cleared if Chromium fires `beforeinstallprompt` again (app was uninstalled).
+- **`PullToRefresh.tsx`**: pull-to-refresh animation now enabled on all touch devices (mobile browser tabs too, not just installed/standalone). Sets `overscroll-behavior-y: contain` so Chrome's native pull-to-refresh doesn't double up.
+- **`src/types/css.d.ts`** (new): declares `*.css` modules, fixing TS2882 "Cannot find module or type declarations for side-effect import of './globals.css'" in `layout.tsx`.
+- **`src/components/pwa/OpenInAppHint.tsx`** (new): when DARS is installed but opened in a normal browser tab, shows a dismissible card (per tab session) telling the user to open the installed app, with platform-specific wording. Detects installs via the `dars:installed` flag (also set whenever the app runs standalone) and `getInstalledRelatedApps()` where supported; clears itself if Chromium reports the app is no longer installed.
+- **`src/lib/pwa.ts`** (new): shared PWA helpers (`detectPlatform`, `isStandalone`, storage helpers, `INSTALLED_KEY`), now used by `InstallPrompt.tsx` and `OpenInAppHint.tsx`.
+- `src/app/offline/page.tsx` is no longer used by the worker and can be deleted.
+
 ## v2.0.0 — Multi-Session Attendance + Role Management
 
 ### Breaking Schema Changes

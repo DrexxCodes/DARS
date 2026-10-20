@@ -9,7 +9,7 @@ import {
   ResponsiveContainer, Cell
 } from "recharts";
 import { clientAuth } from "@/lib/firebase-client";
-import { getAttendanceColor, getAttendanceBg } from "@/lib/utils";
+import { getAttendanceStatus } from "@/lib/utils";
 import { BookOpen, TrendingUp, CheckCircle2, XCircle } from "lucide-react";
 
 interface CourseAttendance {
@@ -59,12 +59,19 @@ export default function DashboardPage() {
   const totalAttended = data.reduce((s, c) => s + c.attended, 0);
   const overallPct = totalClasses > 0 ? Math.round((totalAttended / totalClasses) * 100) : 0;
 
+  const overallStatus = {
+    accent: ({ none: "slate", critical: "red", low: "orange", normal: "blue", nerd: "green" } as const)[
+      getAttendanceStatus(overallPct, totalClasses).tier
+    ],
+  };
+
   const chartData = data.map((c) => ({
     name: c.courseCode,
     fullName: c.courseName,
     attended: c.attended,
     missed: c.total - c.attended,
     percentage: c.percentage,
+    fill: getAttendanceStatus(c.percentage, c.total).hex,
   }));
 
   return (
@@ -92,7 +99,7 @@ export default function DashboardPage() {
           <>
             <StatCard label="Overall Rate" value={`${overallPct}%`} sub="across all courses"
               icon={<TrendingUp className="w-4 h-4" />}
-              accent={overallPct >= 75 ? "green" : overallPct >= 50 ? "yellow" : "red"} />
+              accent={overallStatus.accent} />
             <StatCard label="Classes Attended" value={totalAttended} sub={`of ${totalClasses} total`}
               icon={<CheckCircle2 className="w-4 h-4" />} accent="green" />
             <StatCard label="Classes Missed" value={totalClasses - totalAttended} sub="absences recorded"
@@ -137,7 +144,7 @@ export default function DashboardPage() {
               />
               <Bar dataKey="attended" name="Attended" radius={[6, 6, 0, 0]}>
                 {chartData.map((entry, i) => (
-                  <Cell key={i} fill={entry.percentage >= 75 ? "#16a34a" : entry.percentage >= 50 ? "#ca8a04" : "#dc2626"} />
+                  <Cell key={i} fill={entry.fill} />
                 ))}
               </Bar>
               <Bar dataKey="missed" name="Missed" fill="#e2e8f0" radius={[6, 6, 0, 0]} />
@@ -157,7 +164,9 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-400 py-4">No courses found.</p>
         ) : (
           <div className="space-y-3">
-            {data.map((course) => (
+            {data.map((course) => {
+              const status = getAttendanceStatus(course.percentage, course.total);
+              return (
               <div key={course.courseId} className="flex items-center gap-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -166,22 +175,21 @@ export default function DashboardPage() {
                   </div>
                   <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-700 ${getAttendanceBg(course.percentage)}`}
+                      className={`h-full rounded-full transition-all duration-700 ${status.bar}`}
                       style={{ width: `${course.percentage}%` }}
                     />
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className={`text-sm font-bold ${getAttendanceColor(course.percentage)}`}>
+                  <p className={`text-sm font-bold ${status.text}`}>
                     {course.percentage}%
                   </p>
                   <p className="text-xs text-slate-400">{course.attended}/{course.total}</p>
                 </div>
-                <Badge variant={course.percentage >= 75 ? "green" : course.percentage >= 50 ? "yellow" : "red"}>
-                  {course.percentage >= 75 ? "Good" : course.percentage >= 50 ? "Fair" : "Low"}
-                </Badge>
+                <Badge variant={status.badge}>{status.label}</Badge>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -191,13 +199,15 @@ export default function DashboardPage() {
 
 function StatCard({ label, value, sub, icon, accent }: {
   label: string; value: string | number; sub: string;
-  icon: React.ReactNode; accent: "green" | "yellow" | "red" | "blue";
+  icon: React.ReactNode; accent: "green" | "yellow" | "red" | "blue" | "orange" | "slate";
 }) {
   const colors = {
     green: "bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400",
     yellow: "bg-yellow-50 text-yellow-600 dark:bg-yellow-950 dark:text-yellow-400",
     red: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400",
     blue: "bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400",
+    orange: "bg-orange-50 text-orange-600 dark:bg-orange-950 dark:text-orange-400",
+    slate: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
   };
   return (
     <Card className="p-4">
