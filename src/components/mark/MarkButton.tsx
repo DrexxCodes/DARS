@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Input } from "@/components/ui";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { clientAuth } from "@/lib/firebase-client";
 import { getFreshPosition } from "@/lib/geolocation-client";
+import { getDeviceSignals } from "@/lib/device-fingerprint";
 import { haptic } from "@/lib/haptics";
 import { CheckCircle2, UserCog } from "lucide-react";
 
@@ -24,6 +25,11 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
   const [useOverride, setUseOverride] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Compute the fingerprint ahead of time so tapping "Mark" never waits on it
+  useEffect(() => {
+    getDeviceSignals().catch(() => {});
+  }, []);
 
   const handleMark = async () => {
     setError("");
@@ -55,6 +61,7 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
         return;
       }
 
+      const signals = await getDeviceSignals().catch(() => null);
       const token = await clientAuth.currentUser?.getIdToken();
       const res = await fetch("/api/mark", {
         method: "POST",
@@ -62,7 +69,7 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ courseId, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, ...(regNumber ? { regNumber } : {}) }),
+        body: JSON.stringify({ courseId, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, ...(signals ?? {}), ...(regNumber ? { regNumber } : {}) }),
       });
 
       const data = await res.json();

@@ -10,6 +10,7 @@ import {
   MapPin,
   UserCog,
   Heart,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
@@ -48,6 +49,7 @@ export function useNavItems(): NavItem[] {
     items.push({ href: "/admin", label: "Admin", shortLabel: "Admin", icon: ShieldCheck });
     items.push({ href: "/admin/tags", label: "Location Tags", shortLabel: "Tags", icon: MapPin });
     items.push({ href: "/admin/add", label: "Manage Admins", shortLabel: "Admins", icon: UserCog });
+    items.push({ href: "/admin/reset", label: "Admin Reset", shortLabel: "Reset", icon: RotateCcw });
   }
   items.push({ href: "#credits", label: "Credits", shortLabel: "Credits", icon: Heart, action: "credits" });
   return items;

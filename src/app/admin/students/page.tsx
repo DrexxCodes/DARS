@@ -7,7 +7,8 @@ import { Card, Button, Input, Badge, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getAttendanceStatus } from "@/lib/utils";
 import { toast } from "sonner";
-import { Search, Lock, BookOpen, TrendingUp, User } from "lucide-react";
+import { Search, Lock, BookOpen, TrendingUp, User, Ban } from "lucide-react";
+import RevokeAttendanceDialog from "@/components/admin/RevokeAttendanceDialog";
 
 interface CourseAttendance {
   courseId: string;
@@ -32,6 +33,7 @@ export default function StudentSearchPage() {
   const [searching, setSearching] = useState(false);
   const [student, setStudent] = useState<StudentResult | null>(null);
   const [courses, setCourses] = useState<CourseAttendance[]>([]);
+  const [revokeOpen, setRevokeOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -104,6 +106,17 @@ export default function StudentSearchPage() {
             <p className="text-sm text-slate-500 font-mono">{student.regNumber}</p>
             {student.department && <p className="text-xs text-slate-400 mt-0.5">{student.department}</p>}
           </div>
+          {assignedCourses.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto text-red-600 dark:text-red-400"
+              icon={<Ban className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeOpen(true)}
+            >
+              Revoke a day
+            </Button>
+          )}
         </Card>
       )}
 
@@ -189,6 +202,16 @@ export default function StudentSearchPage() {
             </div>
           )}
         </>
+      )}
+
+      {student && (
+        <RevokeAttendanceDialog
+          open={revokeOpen}
+          onClose={() => setRevokeOpen(false)}
+          onDone={handleSearch}
+          student={{ regNumber: student.regNumber, name: student.name }}
+          courses={assignedCourses}
+        />
       )}
     </div>
   );

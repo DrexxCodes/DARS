@@ -11,8 +11,12 @@ import InstallPrompt from "@/components/pwa/InstallPrompt";
 import PullToRefresh from "@/components/pwa/PullToRefresh";
 import OpenInAppHint from "@/components/pwa/OpenInAppHint";
 import ServiceWorkerRegister from "@/components/pwa/ServiceWorkerRegister";
+import ViewportLock from "@/components/pwa/ViewportLock";
 import { Toaster } from "sonner";
 import PageTransition from "@/components/ui/PageTransition";
+
+// Keeps toasts below the notch / Dynamic Island / status bar on iPhones.
+const TOAST_TOP_OFFSET = "calc(env(safe-area-inset-top, 0px) + 12px)";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -34,6 +38,8 @@ export const viewport: Viewport = {
   themeColor: "#16a34a",
   width: "device-width",
   initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
 };
 
@@ -60,12 +66,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </div>
             <BottomNav />
+            <ViewportLock />
             <PullToRefresh />
             <InstallPrompt />
             <OpenInAppHint />
             <ServiceWorkerRegister />
             <Toaster
               position="top-center"
+              offset={{ top: TOAST_TOP_OFFSET }}
+              mobileOffset={{ top: TOAST_TOP_OFFSET }}
               richColors
               toastOptions={{
                 classNames: {

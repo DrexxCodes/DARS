@@ -41,24 +41,14 @@ export default function PullToRefresh() {
     setEnabled("ontouchstart" in window || navigator.maxTouchPoints > 0);
   }, []);
 
-  // Replace the browser's native pull-to-refresh so only our animation shows.
-  useEffect(() => {
-    if (!enabled) return;
-    const root = document.documentElement;
-    const prev = root.style.overscrollBehaviorY;
-    root.style.overscrollBehaviorY = "contain";
-    return () => {
-      root.style.overscrollBehaviorY = prev;
-    };
-  }, [enabled]);
-
   useEffect(() => {
     if (!enabled) return;
 
     const onStart = (e: TouchEvent) => {
       if (busy.current || e.touches.length !== 1) return;
-      if (window.scrollY > 0 || document.body.style.overflow === "hidden") return;
+      if (document.body.style.overflow === "hidden") return;
       if (hasScrolledAncestor(e.target)) return;
+      // Don't require scrollY === 0 here: a touch can land mid-momentum. The move handler re-baselines until the page is at the top.
       startY.current = e.touches[0].clientY;
       startX.current = e.touches[0].clientX;
       active.current = false;
@@ -67,25 +57,33 @@ export default function PullToRefresh() {
 
     const onMove = (e: TouchEvent) => {
       if (startY.current === null || busy.current) return;
-      const dy = e.touches[0].clientY - startY.current;
-      const dx = Math.abs(e.touches[0].clientX - startX.current);
+      if (e.touches.length !== 1) {
+        startY.current = null;
+        return;
+      }
+      const y = e.touches[0].clientY;
 
       if (!active.current) {
-        if (dy < 0) {
-          startY.current = null;
+        // Page still scrolled, or the finger is moving up: this isn't a pull yet, so restart the measurement from here.
+        if (window.scrollY > 0 || y < startY.current) {
+          startY.current = y;
+          startX.current = e.touches[0].clientX;
           return;
         }
-        if (dy < 8 || dx > dy) return; // not a clear downward pull yet
-        if (window.scrollY > 0) {
-          startY.current = null;
+        const dy = y - startY.current;
+        const dx = Math.abs(e.touches[0].clientX - startX.current);
+        if (dy < 3) return;
+        if (dx > dy) {
+          startY.current = null; // horizontal gesture
           return;
         }
         active.current = true;
         setDragging(true);
       }
 
-      e.preventDefault(); // stop rubber-banding while we're handling the pull
-      const d = Math.min(MAX_PULL, dy * 0.5);
+      // Claim the gesture from the first pixel so the browser can't rubber-band the page (or the header) underneath us.
+      if (e.cancelable) e.preventDefault();
+      const d = Math.max(0, Math.min(MAX_PULL, (y - startY.current) * 0.5));
       pullRef.current = d;
       setPull(d);
 

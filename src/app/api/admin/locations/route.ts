@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
 
   try {
-    const { name, lat, lng, radiusMeters, isPrimary } = await req.json();
+    const { name, lat, lng, accuracy, radiusMeters, isPrimary } = await req.json();
 
     if (!name || typeof lat !== "number" || typeof lng !== "number") {
       return NextResponse.json({ error: "Name and captured coordinates are required." }, { status: 400 });
@@ -68,6 +68,8 @@ export async function POST(req: NextRequest) {
 
     const now = Date.now();
     const colRef = locationsCollection();
+    // Stored for reference: how precise the GPS fix was when the centre point was captured
+    const capturedAccuracyMeters = typeof accuracy === "number" && Number.isFinite(accuracy) ? Math.round(accuracy) : null;
 
     // If this is the first location ever, force it to be primary regardless of input.
     const existingSnap = await colRef.limit(1).get();
@@ -85,6 +87,7 @@ export async function POST(req: NextRequest) {
         lat,
         lng,
         radiusMeters: radius,
+        capturedAccuracyMeters,
         isPrimary: true,
         createdAt: now,
         createdBy: superAdmin.uid,
@@ -96,6 +99,7 @@ export async function POST(req: NextRequest) {
         lat,
         lng,
         radiusMeters: radius,
+        capturedAccuracyMeters,
         isPrimary: false,
         createdAt: now,
         createdBy: superAdmin.uid,

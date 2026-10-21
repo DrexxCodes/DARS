@@ -55,3 +55,24 @@
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* ── Mobile / installed-app behaviour ─────────────────────────────────────── */
+html,
+body {
+  /* "none" (not "contain") also kills the iOS rubber-band, which was dragging the header */
+  overscroll-behavior: none;
+  /* blocks pinch-zoom and double-tap zoom, still allows scrolling */
+  touch-action: pan-x pan-y;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* iOS Safari zooms into any focused field whose font-size is under 16px */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+

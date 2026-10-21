@@ -5,6 +5,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { Card, Button, Input, Badge, Skeleton, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
+import { getBestPosition } from "@/lib/geolocation-client";
+import { accuracyTier, ACCURACY_GOOD_M, ACCURACY_POOR_M } from "@/lib/location-accuracy";
 import { toast } from "sonner";
 import {
   MapPin, Plus, Star, Trash2, Tag as TagIcon, Crosshair, AlertTriangle,
@@ -33,6 +35,7 @@ export default function TagsPage() {
   const [showForm, setShowForm] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatus>("idle");
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [accuracy, setAccuracy] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [radius, setRadius] = useState("200");
   const [makePrimary, setMakePrimary] = useState(false);
@@ -67,6 +70,7 @@ export default function TagsPage() {
     setShowForm(false);
     setCaptureStatus("idle");
     setCoords(null);
+    setAccuracy(null);
     setName("");
     setRadius("200");
     setMakePrimary(false);
@@ -79,16 +83,16 @@ export default function TagsPage() {
       return;
     }
     setCaptureStatus("capturing");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    // Takes the most accurate reading over a few seconds instead of trusting the first (usually rough) fix
+    getBestPosition({ targetAccuracy: 15, maxWaitMs: 10_000 })
+      .then((fix) => {
+        setCoords({ lat: fix.lat, lng: fix.lng });
+        setAccuracy(fix.accuracy);
         setCaptureStatus("captured");
-      },
-      (err) => {
-        setCaptureStatus(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable");
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
+      })
+      .catch((e: { kind?: string }) => {
+        setCaptureStatus(e.kind === "denied" ? "denied" : e.kind === "unsupported" ? "unsupported" : "unavailable");
+      });
   };
 
   const handleCreate = async () => {
@@ -107,6 +111,7 @@ export default function TagsPage() {
           name: name.trim(),
           lat: coords.lat,
           lng: coords.lng,
+          accuracy,
           radiusMeters: radiusNum,
           isPrimary: makePrimary,
         }),
@@ -249,7 +254,7 @@ export default function TagsPage() {
         <div className="flex flex-col items-center gap-4 py-4 text-center">
           <div className="w-12 h-12 rounded-full border-4 border-brand-200 dark:border-brand-900 border-t-brand-600 dark:border-t-brand-400 animate-spin" />
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Please hold as DARS captures your location...
+            Hold still while DARS finds your most accurate position (up to 10 seconds)...
           </p>
         </div>
       </Dialog>
@@ -292,6 +297,34 @@ export default function TagsPage() {
               <MapPin className="w-3.5 h-3.5 shrink-0" />
               {coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}
             </div>
+
+            {accuracy !== null && (() => {
+              const tier = accuracyTier(accuracy);
+              const styles = {
+                good: "bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300",
+                fair: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400",
+                poor: "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400",
+              }[tier];
+              return (
+                <div className={`flex items-start gap-2 text-sm p-3 rounded-lg ${styles}`}>
+                  <Crosshair className="w-4 h-4 mt-0.5 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <p>
+                      <span className="font-semibold">Accuracy ±{Math.round(accuracy)} m</span>
+                      {" · "}
+                      {tier === "good" && "Good. This is a solid centre point."}
+                      {tier === "fair" && `Okay, but under ${ACCURACY_GOOD_M} m gives students a more precise circle.`}
+                      {tier === "poor" && `Too rough (over ${ACCURACY_POOR_M} m). The whole circle could be shifted. Move outside or next to a window, turn on high-accuracy GPS, then recapture.`}
+                    </p>
+                    {tier !== "good" && (
+                      <Button size="sm" variant="outline" icon={<Crosshair className="w-3.5 h-3.5" />} onClick={startCapture}>
+                        Recapture
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <Input
               label="Location Name"

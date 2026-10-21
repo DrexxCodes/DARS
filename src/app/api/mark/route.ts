@@ -4,12 +4,13 @@ import { FieldValue } from "firebase-admin/firestore";
 import { rateLimit } from "@/lib/rate-limit";
 import { REG_NUMBER_REGEX, isClassExpired, isLateAttendance } from "@/lib/utils";
 import { distanceInMeters } from "@/lib/geo";
+import { DEVICE_CONFLICT, SIGNALS_REQUIRED, buildDeviceClaims, getClientIp, parseDeviceSignals } from "@/lib/device-check";
 
 // Reject fixes less precise than this (IP/cell-tower based fixes are often 1km+ off).
 const MAX_ACCURACY_METERS = 150;
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "unknown";
+  const ip = getClientIp(req);
   const { allowed } = rateLimit(ip, 20, 60_000);
   if (!allowed) {
     return NextResponse.json({ error: "Too many requests. Please wait a moment." }, { status: 429 });
@@ -33,7 +34,7 @@ export async function POST(req: NextRequest) {
     if (!callerDoc.exists) return NextResponse.json({ error: "Account not found." }, { status: 404 });
     const caller = callerDoc.data()!;
 
-    const { courseId, lat, lng, accuracy, regNumber: targetRegNumber } = await req.json();
+    const { courseId, lat, lng, accuracy, regNumber: targetRegNumber, fingerprint, deviceId } = await req.json();
     if (!courseId) return NextResponse.json({ error: "Course is required." }, { status: 400 });
 
     let normalized: string;
@@ -51,8 +52,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid registration number format." }, { status: 400 });
     }
 
-    // 1. Fetch globals
-    const globalDoc = await db.collection("globals").doc(courseId).get();
+    // Device signals are required for self-marks. Admin overrides skip them (the admin's phone would collide with itself).
+    const signals = targetRegNumber ? null : parseDeviceSignals(fingerprint, deviceId);
+    if (!targetRegNumber && !signals) {
+      return NextResponse.json(SIGNALS_REQUIRED, { status: 400 });
+    }
+
+    // 1. Fetch globals + student together (independent reads)
+    const [globalDoc, studentDoc] = await Promise.all([
+      db.collection("globals").doc(courseId).get(),
+      db.collection("students").doc(normalized).get(),
+    ]);
     if (!globalDoc.exists) return NextResponse.json({ error: "Course not found or no active class." }, { status: 404 });
     const global = globalDoc.data()!;
 
@@ -92,8 +102,23 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    const locationDoc = await db
-      .collection("globals").doc("locationConfig").collection("locations").doc(global.locationId).get();
+    // Remaining reads run in parallel: location, user (ban), duplicate mark and device claims.
+    const student = studentDoc.exists ? studentDoc.data()! : null;
+    const attendanceRef = db
+      .collection("students").doc(normalized)
+      .collection("attendance").doc(courseId)
+      .collection("records").doc(classId);
+    const claims = signals
+      ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, regNumber: normalized, ip, signals })
+      : null;
+
+    const [locationDoc, userDoc, existingMark, claimSnaps] = await Promise.all([
+      db.collection("globals").doc("locationConfig").collection("locations").doc(global.locationId).get(),
+      student?.uid ? db.collection("users").doc(student.uid).get() : Promise.resolve(null),
+      attendanceRef.get(),
+      claims ? db.getAll(...claims.refs) : Promise.resolve([]),
+    ]);
+
     if (!locationDoc.exists) {
       return NextResponse.json(
         { error: "This class's location tag no longer exists. Ask your lecturer to restart the class.", code: "LOCATION_NOT_CONFIGURED" },
@@ -110,26 +135,29 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Student exists?
-    const studentDoc = await db.collection("students").doc(normalized).get();
-    if (!studentDoc.exists) return NextResponse.json({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
-    const student = studentDoc.data()!;
+    if (!student) return NextResponse.json({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
 
     // 5. Ban checks
     if (student.banned) return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
-    const userDoc = await db.collection("users").doc(student.uid).get();
-    if (userDoc.exists && userDoc.data()?.banned) {
+    if (userDoc?.exists && userDoc.data()?.banned) {
       return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
     }
 
     // 6. Duplicate check — keyed by classId (unique per session, not date)
-    const attendanceRef = db
-      .collection("students").doc(normalized)
-      .collection("attendance").doc(courseId)
-      .collection("records").doc(classId);
-
-    const existingMark = await attendanceRef.get();
     if (existingMark.exists) {
       return NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 });
+    }
+
+    // 6b. Device check — same browser profile, or same phone model on the same network, already marked this class
+    const conflicts = claimSnaps.filter((snap) => snap.exists);
+    if (conflicts.length > 0) {
+      console.warn("[device-conflict]", {
+        classId,
+        courseId,
+        attempted: normalized,
+        alreadyMarkedBy: conflicts.map((snap) => snap.data()?.regNumber),
+      });
+      return NextResponse.json(DEVICE_CONFLICT, { status: 403 });
     }
 
     const now = Date.now();
@@ -156,11 +184,20 @@ export async function POST(req: NextRequest) {
     // Increment on student record
     batch.update(db.collection("students").doc(normalized), { totalPresence: FieldValue.increment(1) });
 
+    // Device claims (create() fails if a racing request already took either one)
+    if (claims) {
+      for (const ref of claims.refs) batch.create(ref, claims.data);
+    }
+
     try {
       await batch.commit();
     } catch (e) {
       if ((e as { code?: number }).code === 6) {
-        return NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 });
+        // ALREADY_EXISTS: either the attendance record or a device claim lost a race
+        const raced = await attendanceRef.get();
+        return raced.exists
+          ? NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 })
+          : NextResponse.json(DEVICE_CONFLICT, { status: 403 });
       }
       throw e;
     }
