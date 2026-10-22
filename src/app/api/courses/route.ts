@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
+import { parseDepartments, parseLevels } from "@/lib/admission";
 
 interface AdminUser {
   uid: string;
@@ -51,16 +52,24 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { name, code, description } = await req.json();
+    const { name, code, description, levels: rawLevels, departments: rawDepartments } = await req.json();
     if (!name || !code) {
       return NextResponse.json({ error: "Course name and code are required." }, { status: 400 });
     }
+    // Levels this course is assigned to; empty = open to every level
+    const levels = rawLevels === undefined ? [] : parseLevels(rawLevels);
+    if (!levels) return NextResponse.json({ error: "Invalid levels." }, { status: 400 });
+    // Departments this course is restricted to; empty = open to every department
+    const departments = rawDepartments === undefined ? [] : parseDepartments(rawDepartments);
+    if (!departments) return NextResponse.json({ error: "Invalid departments." }, { status: 400 });
 
     const now = Date.now();
     const ref = await db.collection("courses").add({
       name,
       code: code.toUpperCase(),
       description: description || "",
+      levels,
+      departments,
       assignedAdmins: [],
       active: true,
       totalClasses: 0,   // ← denormalized counter
@@ -92,11 +101,23 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const { courseId, assignedAdmins, active } = await req.json();
+    const { courseId, assignedAdmins, active, levels, departments } = await req.json();
     const update: Record<string, unknown> = {};
+    if (levels !== undefined) {
+      const parsed = parseLevels(levels);
+      if (!parsed) return NextResponse.json({ error: "Invalid levels." }, { status: 400 });
+      update.levels = parsed;
+    }
+    if (departments !== undefined) {
+      const parsed = parseDepartments(departments);
+      if (!parsed) return NextResponse.json({ error: "Invalid departments." }, { status: 400 });
+      update.departments = parsed;
+    }
     if (assignedAdmins !== undefined) update.assignedAdmins = assignedAdmins;
     if (active !== undefined) update.active = active;
 
+    if (typeof courseId !== "string" || !courseId) return NextResponse.json({ error: "courseId required." }, { status: 400 });
+    if (Object.keys(update).length === 0) return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
     await db.collection("courses").doc(courseId).update(update);
     return NextResponse.json({ success: true });
   } catch (error) {

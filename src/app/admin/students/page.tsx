@@ -7,8 +7,10 @@ import { Card, Button, Input, Badge, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getAttendanceStatus } from "@/lib/utils";
 import { toast } from "sonner";
-import { Search, Lock, BookOpen, TrendingUp, User, Ban } from "lucide-react";
+import { Search, Lock, BookOpen, TrendingUp, User, Ban, Pencil, UserCheck } from "lucide-react";
 import RevokeAttendanceDialog from "@/components/admin/RevokeAttendanceDialog";
+import MarkPresentDialog from "@/components/admin/MarkPresentDialog";
+import EditStudentNameDialog from "@/components/admin/EditStudentNameDialog";
 
 interface CourseAttendance {
   courseId: string;
@@ -34,6 +36,8 @@ export default function StudentSearchPage() {
   const [student, setStudent] = useState<StudentResult | null>(null);
   const [courses, setCourses] = useState<CourseAttendance[]>([]);
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [markOpen, setMarkOpen] = useState(false);
+  const [editNameOpen, setEditNameOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -97,25 +101,46 @@ export default function StudentSearchPage() {
       </Card>
 
       {student && (
-        <Card className="p-5 flex items-center gap-4">
+        <Card className="p-5 flex flex-wrap items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center shrink-0">
             <User className="w-5 h-5 text-brand-700 dark:text-brand-300" />
           </div>
-          <div>
-            <p className="font-bold text-slate-900 dark:text-white">{student.name}</p>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <p className="font-bold text-slate-900 dark:text-white truncate">{student.name}</p>
+              <button
+                onClick={() => setEditNameOpen(true)}
+                className="p-1 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                title="Edit name"
+                aria-label="Edit name"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <p className="text-sm text-slate-500 font-mono">{student.regNumber}</p>
             {student.department && <p className="text-xs text-slate-400 mt-0.5">{student.department}</p>}
           </div>
           {assignedCourses.length > 0 && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="ml-auto text-red-600 dark:text-red-400"
-              icon={<Ban className="w-3.5 h-3.5" />}
-              onClick={() => setRevokeOpen(true)}
-            >
-              Revoke a day
-            </Button>
+            <div className="flex gap-2 ml-auto">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-brand-700 dark:text-brand-300"
+                icon={<UserCheck className="w-3.5 h-3.5" />}
+                onClick={() => setMarkOpen(true)}
+              >
+                Mark present
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-red-600 dark:text-red-400"
+                icon={<Ban className="w-3.5 h-3.5" />}
+                onClick={() => setRevokeOpen(true)}
+              >
+                Revoke a day
+              </Button>
+            </div>
           )}
         </Card>
       )}
@@ -205,6 +230,20 @@ export default function StudentSearchPage() {
       )}
 
       {student && (
+        <>
+        <MarkPresentDialog
+          open={markOpen}
+          onClose={() => setMarkOpen(false)}
+          onDone={handleSearch}
+          student={{ regNumber: student.regNumber, name: student.name }}
+          courses={assignedCourses}
+        />
+        <EditStudentNameDialog
+          open={editNameOpen}
+          onClose={() => setEditNameOpen(false)}
+          onSaved={(name) => setStudent((prev) => (prev ? { ...prev, name } : prev))}
+          student={{ regNumber: student.regNumber, name: student.name }}
+        />
         <RevokeAttendanceDialog
           open={revokeOpen}
           onClose={() => setRevokeOpen(false)}
@@ -212,6 +251,7 @@ export default function StudentSearchPage() {
           student={{ regNumber: student.regNumber, name: student.name }}
           courses={assignedCourses}
         />
+        </>
       )}
     </div>
   );

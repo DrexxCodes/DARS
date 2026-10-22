@@ -6,7 +6,8 @@
     "dev": "next dev -p 2020",
     "build": "next build",
     "start": "next start -p 2020",
-    "lint": "next lint"
+    "lint": "next lint",
+    "app": "pnpm run build && pnpm run start"
   },
   "dependencies": {
     "clsx": "^2.1.1",

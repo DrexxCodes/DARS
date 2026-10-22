@@ -7,12 +7,17 @@ import { Card, Button, Input, Badge, Skeleton, Select, Dialog } from "@/componen
 import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
 import { formatTime } from "@/lib/utils";
+import LevelPicker from "@/components/admin/LevelPicker";
+import DepartmentPicker from "@/components/admin/DepartmentPicker";
+import ExportAttendanceCard from "@/components/admin/ExportAttendanceCard";
+import CarryoverRequestsCard from "@/components/admin/CarryoverRequestsCard";
+import { levelLabel, departmentLabel } from "@/constants/academics";
 import {
   PlayCircle, StopCircle, PauseCircle, PlayIcon,
   Plus, Clock, Users, BookOpen, Activity, MapPin, Trash2, AlertTriangle
 } from "lucide-react";
 
-interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; }
+interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; levels?: number[]; departments?: string[]; }
 interface GlobalState {
   classActive: boolean; checkinPaused: boolean;
   startTime: number | null; endTime: number | null;
@@ -41,7 +46,10 @@ export default function AdminCreatePage() {
 
   // New course form
   const [showCourseForm, setShowCourseForm] = useState(false);
-  const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "" });
+  const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "", levels: [] as number[], departments: [] as string[] });
+  const [editLevels, setEditLevels] = useState<number[] | null>(null); // non-null while editing the selected course's levels + departments
+  const [editDepartments, setEditDepartments] = useState<string[]>([]);
+  const [savingLevels, setSavingLevels] = useState(false);
   const [creatingCourse, setCreatingCourse] = useState(false);
 
   // Locations
@@ -200,14 +208,33 @@ export default function AdminCreatePage() {
       const data = await res.json();
       if (!res.ok) { toast.error(data.error); return; }
       toast.success(`Course ${newCourse.code} created!`);
-      setNewCourse({ name: "", code: "", description: "" });
+      setNewCourse({ name: "", code: "", description: "", levels: [], departments: [] });
       setShowCourseForm(false);
       fetchCourses();
     } catch { toast.error("Failed to create course."); } finally { setCreatingCourse(false); }
   };
 
+  const handleSaveLevels = async () => {
+    if (!selectedCourse || editLevels === null) return;
+    setSavingLevels(true);
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/courses", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ courseId: selectedCourse, levels: editLevels, departments: editDepartments }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Failed to update course."); return; }
+      toast.success("Course audience updated.");
+      setEditLevels(null);
+      fetchCourses();
+    } catch { toast.error("Failed to update levels."); } finally { setSavingLevels(false); }
+  };
+
   if (authLoading || !profile?.admin) return null;
 
+  const selectedCourseData = courses.find((c) => c.id === selectedCourse);
   const isActive = globalState?.classActive;
   const isPaused = globalState?.checkinPaused;
 
@@ -237,6 +264,14 @@ export default function AdminCreatePage() {
           </div>
           <Input label="Description (optional)" placeholder="Brief description"
             value={newCourse.description} onChange={(e) => setNewCourse(p => ({ ...p, description: e.target.value }))} />
+          <div>
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Assign to levels</p>
+            <LevelPicker value={newCourse.levels} onChange={(levels) => setNewCourse((p) => ({ ...p, levels }))} />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Restrict to departments</p>
+            <DepartmentPicker value={newCourse.departments} onChange={(departments) => setNewCourse((p) => ({ ...p, departments }))} />
+          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" size="sm" onClick={() => setShowCourseForm(false)}>Cancel</Button>
             <Button size="sm" loading={creatingCourse} onClick={handleCreateCourse}>Create Course</Button>
@@ -253,6 +288,37 @@ export default function AdminCreatePage() {
             onChange={(e) => setSelectedCourse(e.target.value)}
             options={courses.map((c) => ({ value: c.id, label: `${c.code} - ${c.name}` }))}
           />
+          {selectedCourse && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Levels:</span>
+                  {selectedCourseData?.levels?.length
+                    ? selectedCourseData.levels.map((l) => <Badge key={l} variant="blue">{levelLabel(l)}</Badge>)
+                    : <Badge variant="slate">All levels</Badge>}
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-2">Departments:</span>
+                  {selectedCourseData?.departments?.length
+                    ? selectedCourseData.departments.map((d) => <Badge key={d} variant="orange">{departmentLabel(d)}</Badge>)
+                    : <Badge variant="slate">All departments</Badge>}
+                </div>
+                {profile.scope === "super" && editLevels === null && (
+                  <Button size="sm" variant="outline" onClick={() => { setEditLevels(selectedCourseData?.levels ?? []); setEditDepartments(selectedCourseData?.departments ?? []); }}>
+                    Edit Audience
+                  </Button>
+                )}
+              </div>
+              {profile.scope === "super" && editLevels !== null && (
+                <div className="space-y-3 border-t border-slate-100 dark:border-slate-700 pt-3">
+                  <LevelPicker value={editLevels} onChange={setEditLevels} disabled={savingLevels} />
+                  <DepartmentPicker value={editDepartments} onChange={setEditDepartments} disabled={savingLevels} />
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setEditLevels(null)}>Cancel</Button>
+                    <Button size="sm" loading={savingLevels} onClick={handleSaveLevels}>Save</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {profile.scope === "super" && selectedCourse && (
             <div className="flex justify-end">
               <Button
@@ -409,6 +475,12 @@ export default function AdminCreatePage() {
               </div>
             )}
           </Card>
+
+          {/* Carry-over applications from students of other levels */}
+          <CarryoverRequestsCard courseId={selectedCourse} />
+
+          {/* Export attendance (whole course or one day) */}
+          <ExportAttendanceCard courseId={selectedCourse} sessions={sessions} />
 
           {/* Activity log */}
           <Card className="p-6">

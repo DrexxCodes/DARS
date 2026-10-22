@@ -1,110 +1,98 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, auth } from "@/lib/firebase-admin";
+import { db } from "@/lib/firebase-admin";
+import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
+import { courseVisibleToStudent } from "@/lib/admission";
+import { audienceOf, enrollmentsCol } from "@/lib/enrollment";
+import type { CourseExportData, ExportRecord, ExportSession, ExportStudent } from "@/types/admin";
 
-interface AdminUser {
-  uid: string;
-  admin: boolean;
-  scope?: "super" | "defined";
-  [key: string]: unknown;
-}
+export const maxDuration = 60;
 
-interface Course {
-  id: string;
-  name: string;
-  code: string;
-  assignedAdmins?: string[];
-  totalClasses?: number;
-}
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const CHUNK = 40; // students read in parallel
 
-interface Student {
-  id: string;
-  name: string;
-  regNumber?: string;
-  [key: string]: unknown;
-}
-
-async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return null;
-  try {
-    const decoded = await auth.verifyIdToken(token);
-    const userDoc = await db.collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists) return null;
-    const user = userDoc.data()!;
-    if (!user.admin) return null;
-    return { uid: decoded.uid, ...user } as AdminUser;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * GET /api/admin/export?courseId=…[&date=YYYY-MM-DD]
+ *
+ * Returns the raw attendance data for one course (all its classes, or only the classes held on `date`).
+ * The PDF itself is built in the browser. The student list is strict: the course's levels plus approved carry-overs. Super admins can export any course; scoped admins only their own.
+ */
 export async function GET(req: NextRequest) {
-  const adminUser = await verifyAdmin(req);
-  if (!adminUser) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const admin = await verifyAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
 
   try {
-    const { searchParams } = new URL(req.url);
-    const courseId = searchParams.get("courseId");
+    const q = new URL(req.url).searchParams;
+    const courseId = q.get("courseId");
+    const date = q.get("date");
 
-    const studentsSnap = await db.collection("students").orderBy("regNumber", "asc").get();
-    const students: Student[] = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Student));
+    if (!courseId || courseId.includes("/")) return NextResponse.json({ error: "courseId is required." }, { status: 400 });
+    if (date && !DATE_REGEX.test(date)) return NextResponse.json({ error: "Invalid date." }, { status: 400 });
 
-    let coursesSnap: Course[];
-    if (courseId) {
-      const doc = await db.collection("courses").doc(courseId).get();
-      coursesSnap = doc.exists ? [{ id: doc.id, ...doc.data() } as Course] : [];
-    } else {
-      const snap = await db.collection("courses").get();
-      coursesSnap = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
+    const [course] = await getAccessibleCourses(admin, courseId);
+    if (!course) return NextResponse.json({ error: "You don't have access to that course." }, { status: 403 });
+
+    const [courseDoc, sessionsSnap, studentsSnap, approvedSnap] = await Promise.all([
+      db.collection("courses").doc(courseId).get(),
+      db.collection("classes").doc(courseId).collection("sessions").orderBy("createdAt", "asc").get(),
+      db.collection("students").select("name").get(),
+      enrollmentsCol(courseId).where("status", "==", "approved").get(),
+    ]);
+
+    const audience = audienceOf(courseDoc.data());
+
+    const sessions: ExportSession[] = sessionsSnap.docs
+      .map((d) => {
+        const s = d.data();
+        return {
+          id: d.id,
+          date: String(s.date ?? ""),
+          startTime: Number(s.startTime ?? s.createdAt ?? 0),
+          endTime: Number(s.endTime ?? 0),
+          locationName: (s.locationName as string | undefined) ?? null,
+        };
+      })
+      .filter((s) => !date || s.date === date);
+
+    const payloadBase = { course };
+    if (sessions.length === 0) {
+      return NextResponse.json({ ...payloadBase, sessions, students: [], records: {} } satisfies CourseExportData);
+    }
+    const sessionIds = new Set(sessions.map((s) => s.id));
+
+    // Strict roster: only students the course is for. That's the course's levels and departments (everyone if it has
+    // none set) plus students with an approved carry-over. Other students never appear, even if they have a record.
+    const carryovers = new Set(approvedSnap.docs.map((d) => d.id));
+    const toRead = studentsSnap.docs
+      .filter((d) => courseVisibleToStudent(audience, d.id) || carryovers.has(d.id))
+      .map((d) => ({ regNumber: d.id, name: String(d.data().name ?? "") }));
+
+    const records: Record<string, Record<string, ExportRecord>> = {};
+
+    for (let i = 0; i < toRead.length; i += CHUNK) {
+      await Promise.all(
+        toRead.slice(i, i + CHUNK).map(async (c) => {
+          const snap = await db
+            .collection("students").doc(c.regNumber)
+            .collection("attendance").doc(courseId)
+            .collection("records").get();
+          for (const r of snap.docs) {
+            if (!sessionIds.has(r.id)) continue;
+            const data = r.data();
+            (records[c.regNumber] ??= {})[r.id] = {
+              timestamp: Number(data.timestamp ?? 0),
+              late: !!data.late,
+              manual: !!data.manual,
+            };
+          }
+        })
+      );
     }
 
-    const courses = adminUser.scope === "defined"
-      ? coursesSnap.filter((c) => ((c.assignedAdmins as string[]) || []).includes(adminUser.uid))
-      : coursesSnap;
+    const students: ExportStudent[] = toRead.sort((a, b) => a.regNumber.localeCompare(b.regNumber));
 
-    // rows shape: one row per student per course per class session
-    // attended cell is "Present" | "Absent" so the client can colour it
-    const rows: Record<string, unknown>[] = [];
-
-    for (const course of courses) {
-      // Fetch all sessions for this course ordered chronologically
-      const sessionsSnap = await db
-        .collection("classes").doc(course.id).collection("sessions")
-        .orderBy("createdAt", "asc").get();
-
-      for (const student of students) {
-        for (const sessionDoc of sessionsSnap.docs) {
-          const s = sessionDoc.data();
-          const classId = sessionDoc.id;
-
-          const recordDoc = await db
-            .collection("students").doc(student.id)
-            .collection("attendance").doc(course.id)
-            .collection("records").doc(classId).get();
-
-          const present = recordDoc.exists;
-
-          rows.push({
-            regNumber: student.id,
-            studentName: student.name ?? "",
-            courseCode: course.code,
-            courseName: course.name,
-            classDate: s.date ?? s.dateKey ?? "",
-            classId,
-            // "Present" / "Absent" lets the frontend/client apply colours
-            attended: present ? "Present" : "Absent",
-            late: present ? (recordDoc.data()?.late ? "Yes" : "No") : "-",
-            markedAt: present
-              ? new Date(recordDoc.data()!.timestamp as number).toLocaleTimeString()
-              : "-",
-          });
-        }
-      }
-    }
-
-    return NextResponse.json({ rows, courses, studentCount: students.length });
+    return NextResponse.json({ ...payloadBase, sessions, students, records } satisfies CourseExportData);
   } catch (error) {
-    console.error("Bulk export error:", error);
-    return NextResponse.json({ error: "Export failed" }, { status: 500 });
+    console.error("Attendance export error:", error);
+    return NextResponse.json({ error: "Export failed." }, { status: 500 });
   }
 }

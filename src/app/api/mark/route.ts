@@ -4,16 +4,36 @@ import { FieldValue } from "firebase-admin/firestore";
 import { rateLimit } from "@/lib/rate-limit";
 import { REG_NUMBER_REGEX, isClassExpired, isLateAttendance } from "@/lib/utils";
 import { distanceInMeters } from "@/lib/geo";
+import { courseVisibleToStudent } from "@/lib/admission";
+import { audienceOf, enrollmentRef, NOT_ENROLLED_MESSAGE } from "@/lib/enrollment";
+import { ttlCache } from "@/lib/ttl-cache";
+import { LOCATION_LIMITS } from "@/constants/location";
 import { DEVICE_CONFLICT, SIGNALS_REQUIRED, buildDeviceClaims, getClientIp, parseDeviceSignals } from "@/lib/device-check";
 
-// Reject fixes less precise than this (IP/cell-tower based fixes are often 1km+ off).
-const MAX_ACCURACY_METERS = 150;
+interface LocationTag { name: string; lat: number; lng: number; radiusMeters: number }
+
+// Location tags almost never change mid-class, so every student in the hall shares one read per minute per instance.
+const locationCache = ttlCache<LocationTag | null>(60_000);
+const loadLocation = (locationId: string) =>
+  locationCache.get(locationId, async () => {
+    const snap = await db.collection("globals").doc("locationConfig").collection("locations").doc(locationId).get();
+    return snap.exists ? (snap.data() as LocationTag) : null;
+  });
+
+// Which levels and departments a course is assigned to. Edited rarely, so a short cache keeps this off the hot path.
+const courseAudienceCache = ttlCache<{ levels: number[]; departments: string[] }>(30_000);
+const loadCourseAudience = (courseId: string) =>
+  courseAudienceCache.get(courseId, async () => {
+    const snap = await db.collection("courses").doc(courseId).get();
+    return audienceOf(snap.data());
+  });
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
-  const { allowed } = rateLimit(ip, 20, 60_000);
-  if (!allowed) {
-    return NextResponse.json({ error: "Too many requests. Please wait a moment." }, { status: 429 });
+  // A whole lecture hall can sit behind ONE campus Wi-Fi / mobile-carrier IP, so the per-IP cap is generous
+  // and only exists to blunt floods. The per-account cap below is the real brake.
+  if (!rateLimit(`ip:${ip}`, 600, 60_000).allowed) {
+    return NextResponse.json({ error: "Too many requests. Please wait a moment.", code: "RATE_LIMITED" }, { status: 429 });
   }
 
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -29,13 +49,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Your session has expired. Please sign in again.", code: "AUTH_REQUIRED" }, { status: 401 });
   }
 
+  if (!rateLimit(`uid:${callerUid}`, 15, 60_000).allowed) {
+    return NextResponse.json({ error: "Too many attempts. Please wait a moment.", code: "RATE_LIMITED" }, { status: 429 });
+  }
+
   try {
-    const callerDoc = await db.collection("users").doc(callerUid).get();
+    const { courseId, lat, lng, accuracy, regNumber: targetRegNumber, fingerprint, deviceId } = await req.json();
+    if (typeof courseId !== "string" || !courseId || courseId.includes("/")) {
+      return NextResponse.json({ error: "Course is required." }, { status: 400 });
+    }
+
+    // Round 1 (parallel): who is calling + the course's live class state + which levels/departments the course is for
+    const [callerDoc, globalDoc, courseAudience] = await Promise.all([
+      db.collection("users").doc(callerUid).get(),
+      db.collection("globals").doc(courseId).get(),
+      loadCourseAudience(courseId),
+    ]);
+
     if (!callerDoc.exists) return NextResponse.json({ error: "Account not found." }, { status: 404 });
     const caller = callerDoc.data()!;
-
-    const { courseId, lat, lng, accuracy, regNumber: targetRegNumber, fingerprint, deviceId } = await req.json();
-    if (!courseId) return NextResponse.json({ error: "Course is required." }, { status: 400 });
 
     let normalized: string;
     if (targetRegNumber) {
@@ -52,18 +84,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid registration number format." }, { status: 400 });
     }
 
+    // A student can only mark courses assigned to their level and department, or a carry-over an admin has approved.
+    // Applies to an admin marking for another student too, so the course's records only ever hold its own students.
+    if (!courseVisibleToStudent(courseAudience, normalized)) {
+      const enrol = await enrollmentRef(courseId, normalized).get(); // only reached for off-level students
+      if (!(enrol.exists && enrol.data()?.status === "approved")) {
+        return NextResponse.json(
+          { error: targetRegNumber ? "That student isn't in this course's level and has no approved carry-over." : NOT_ENROLLED_MESSAGE, code: "WRONG_LEVEL" },
+          { status: 403 }
+        );
+      }
+    }
+
     // Device signals are required for self-marks. Admin overrides skip them (the admin's phone would collide with itself).
     const signals = targetRegNumber ? null : parseDeviceSignals(fingerprint, deviceId);
     if (!targetRegNumber && !signals) {
       return NextResponse.json(SIGNALS_REQUIRED, { status: 400 });
     }
 
-    // 1. Fetch globals + student together (independent reads)
-    const [globalDoc, studentDoc] = await Promise.all([
-      db.collection("globals").doc(courseId).get(),
-      db.collection("students").doc(normalized).get(),
-    ]);
-    if (!globalDoc.exists) return NextResponse.json({ error: "Course not found or no active class." }, { status: 404 });
+    if (!globalDoc.exists) return NextResponse.json({ error: "Course not found or no active class.", code: "CLASS_INACTIVE" }, { status: 404 });
     const global = globalDoc.data()!;
 
     if (!global.classActive) {
@@ -76,13 +115,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "The class has ended. Check-in is no longer available.", code: "CLASS_ENDED" }, { status: 400 });
     }
 
-    // 2. The active class's unique ID lives on the globals doc now
+    // The active class's unique ID lives on the globals doc
     const classId: string = global.currentClassId;
     if (!classId) {
       return NextResponse.json({ error: "No active class session found.", code: "CLASS_INACTIVE" }, { status: 400 });
     }
 
-    // 3. Location check — FAILS CLOSED: a class with no usable location can't be marked.
+    // Location check — FAILS CLOSED: a class with no usable location can't be marked.
     if (!global.locationId) {
       return NextResponse.json(
         { error: "This class has no location set. Ask your lecturer to restart it.", code: "LOCATION_NOT_CONFIGURED" },
@@ -96,37 +135,42 @@ export async function POST(req: NextRequest) {
     if (!validCoords) {
       return NextResponse.json({ error: "Location access is required to mark attendance.", code: "LOCATION_REQUIRED" }, { status: 400 });
     }
-    if (typeof accuracy !== "number" || !Number.isFinite(accuracy) || accuracy > MAX_ACCURACY_METERS) {
-      return NextResponse.json(
+    const lowAccuracyResponse = () =>
+      NextResponse.json(
         { error: "Your location signal is too weak/imprecise. Turn on GPS (high accuracy), step outside or near a window, and try again.", code: "LOW_ACCURACY" },
         { status: 400 }
       );
+    if (typeof accuracy !== "number" || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > LOCATION_LIMITS.HARD_MAX_ACCURACY_M) {
+      return lowAccuracyResponse();
     }
-    // Remaining reads run in parallel: location, user (ban), duplicate mark and device claims.
-    const student = studentDoc.exists ? studentDoc.data()! : null;
-    const attendanceRef = db
-      .collection("students").doc(normalized)
-      .collection("attendance").doc(courseId)
-      .collection("records").doc(classId);
+
+    // Round 2 (parallel): student, duplicate mark, device claims and the location tag (cached)
+    const studentRef = db.collection("students").doc(normalized);
+    const attendanceRef = studentRef.collection("attendance").doc(courseId).collection("records").doc(classId);
     const claims = signals
       ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, regNumber: normalized, ip, signals })
       : null;
 
-    const [locationDoc, userDoc, existingMark, claimSnaps] = await Promise.all([
-      db.collection("globals").doc("locationConfig").collection("locations").doc(global.locationId).get(),
-      student?.uid ? db.collection("users").doc(student.uid).get() : Promise.resolve(null),
+    const [studentDoc, existingMark, claimSnaps, location] = await Promise.all([
+      studentRef.get(),
       attendanceRef.get(),
       claims ? db.getAll(...claims.refs) : Promise.resolve([]),
+      loadLocation(global.locationId),
     ]);
 
-    if (!locationDoc.exists) {
+    if (!location) {
       return NextResponse.json(
         { error: "This class's location tag no longer exists. Ask your lecturer to restart the class.", code: "LOCATION_NOT_CONFIGURED" },
         { status: 400 }
       );
     }
-    const location = locationDoc.data()!;
+
     const distance = distanceInMeters(lat, lng, location.lat, location.lng);
+    // A fix worse than MAX_ACCURACY_M is still fine when the whole uncertainty circle lies inside the class radius
+    // (the student is provably in range). Otherwise it's too imprecise to trust.
+    const preciseEnough = accuracy <= LOCATION_LIMITS.MAX_ACCURACY_M;
+    const provablyInside = distance + accuracy <= location.radiusMeters;
+    if (!preciseEnough && !provablyInside) return lowAccuracyResponse();
     if (distance > location.radiusMeters) {
       return NextResponse.json(
         { error: `You must be at ${location.name} to mark attendance.`, code: "OUT_OF_RANGE" },
@@ -134,21 +178,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Student exists?
-    if (!student) return NextResponse.json({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
+    // Student exists?
+    if (!studentDoc.exists) return NextResponse.json({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
+    const student = studentDoc.data()!;
 
-    // 5. Ban checks
+    // Ban checks (the linked account's doc is already in hand for self-marks)
     if (student.banned) return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
-    if (userDoc?.exists && userDoc.data()?.banned) {
-      return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
+    if (student.uid) {
+      const accountDoc = student.uid === callerUid ? callerDoc : await db.collection("users").doc(student.uid).get();
+      if (accountDoc.exists && accountDoc.data()?.banned) {
+        return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
+      }
     }
 
-    // 6. Duplicate check — keyed by classId (unique per session, not date)
+    // Duplicate check — keyed by classId (unique per session, not date). Includes the original result so a client
+    // whose first response was lost can still show success.
     if (existingMark.exists) {
-      return NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 });
+      const m = existingMark.data()!;
+      return NextResponse.json(
+        { error: "You have already marked attendance for this class.", code: "DUPLICATE", name: student.name, late: !!m.late, timestamp: m.timestamp },
+        { status: 409 }
+      );
     }
 
-    // 6b. Device check — same browser profile, or same phone model on the same network, already marked this class
+    // Device check — same browser profile, or same phone model on the same network, already marked this class
     const conflicts = claimSnaps.filter((snap) => snap.exists);
     if (conflicts.length > 0) {
       console.warn("[device-conflict]", {
@@ -163,7 +216,7 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     const late = isLateAttendance(global.startTime);
 
-    // 7. Atomic write
+    // Atomic write
     const batch = db.batch();
 
     // create() (not set()) so two simultaneous requests can't both succeed and double-count
@@ -182,7 +235,7 @@ export async function POST(req: NextRequest) {
     batch.update(sessionRef, { totalPresence: FieldValue.increment(1) });
 
     // Increment on student record
-    batch.update(db.collection("students").doc(normalized), { totalPresence: FieldValue.increment(1) });
+    batch.update(studentRef, { totalPresence: FieldValue.increment(1) });
 
     // Device claims (create() fails if a racing request already took either one)
     if (claims) {
@@ -195,9 +248,14 @@ export async function POST(req: NextRequest) {
       if ((e as { code?: number }).code === 6) {
         // ALREADY_EXISTS: either the attendance record or a device claim lost a race
         const raced = await attendanceRef.get();
-        return raced.exists
-          ? NextResponse.json({ error: "You have already marked attendance for this class.", code: "DUPLICATE" }, { status: 409 })
-          : NextResponse.json(DEVICE_CONFLICT, { status: 403 });
+        if (raced.exists) {
+          const m = raced.data()!;
+          return NextResponse.json(
+            { error: "You have already marked attendance for this class.", code: "DUPLICATE", name: student.name, late: !!m.late, timestamp: m.timestamp },
+            { status: 409 }
+          );
+        }
+        return NextResponse.json(DEVICE_CONFLICT, { status: 403 });
       }
       throw e;
     }

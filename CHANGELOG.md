@@ -1,5 +1,103 @@
 # DARS Changelog
 
+## v2.3.0 — Attendance PDF export, admin "Mark present", edit student name
+
+### Export attendance as PDF (any admin, own courses only)
+- **Classes page** (`src/app/admin/create/page.tsx`): new **Export Attendance** card for the selected course. Pick **Whole course** or **One day** (any day a class was held) and press **Download PDF**.
+- **`src/components/admin/ExportAttendanceCard.tsx`** (new) and **`src/lib/attendance-pdf.ts`** (new): the PDF is built in the browser with jsPDF.
+  - *Whole course*: one row per student, one column per class (P present, L late, A absent), plus attended count and percentage. Wide courses continue across extra pages with the student columns repeated.
+  - *One day*: every student against that day's class(es) with the time each was marked; admin-marked entries are tagged "(admin)".
+- **`src/app/api/admin/export/route.ts`** (rewritten): `GET ?courseId=…[&date=YYYY-MM-DD]`. Super admins can export any course, scoped admins only their assigned ones (403 otherwise). The old version did one Firestore read per student per class and wasn't used by any page; this one does one query per student and returns compact data. The student list is strict: students at the course's levels (everyone, if the course has no levels set) plus students with an approved carry-over. Anyone else is never listed, even if they have a record. `maxDuration` 60 s.
+- `src/types/admin.ts`: export types.
+
+### Mark a student present (any admin, own courses only)
+- **Students page**: new **Mark present** button next to **Revoke a day**. Pick a course, then a class (classes the student already attended are labelled and can't be chosen again).
+- **`src/components/admin/MarkPresentDialog.tsx`** (new), **`src/app/api/admin/students/[regNumber]/mark/route.ts`** (new): `GET ?courseId=` lists classes, `POST { courseId, classId }` marks. One transaction creates the record and bumps the student's and the session's `totalPresence`, so a double-click can't count twice. Skips the location/device checks (like "Mark for another student"). Banned students are refused. The record stores `manual: true`, `markedBy` and the class's `date`, so **Revoke a day** can still remove it. Logged to `activityLog` as `admin_mark_present`.
+
+### Carry-over courses (strict levels + approval)
+A student only belongs to a course if it's for their level **or** an admin has approved a carry-over for them (e.g. a year-4 student with a year-2 course). Stored at `courses/{courseId}/enrollments/{REG}` with `status` `pending` / `approved` / `rejected`.
+- **Student (Mark page)**: "Have a carry-over course? Apply here" opens **`CarryoverDialog.tsx`** (new) listing courses outside their level with **Apply** / Pending / Approved / Apply again. Approved carry-overs appear in the course list tagged "Carry-over". Hook: **`useCarryovers.ts`** (new). API: **`/api/mark/carryover`** (new, `GET` list, `POST { courseId }` apply; rate limited).
+- **Admin (Classes page)**: new **Carry-over Students** card for the selected course (**`CarryoverRequestsCard.tsx`**, new) with Approve / Decline, and Remove for approved ones. API: **`/api/admin/carryover`** (new, `GET ?courseId=`, `POST { courseId, regNumber, decision }`). Super admins can decide for any course; scoped admins only for their assigned courses. Logged as `approve_carryover` / `reject_carryover`.
+- **`src/lib/enrollment.ts`** (new): shared helpers.
+- **`/api/mark`**: the level check now also accepts an approved carry-over, and it applies when an admin marks for another student too. Off-level, un-enrolled students get `WRONG_LEVEL`.
+- **Mark present** (admin): refused for students who aren't in the course or approved as carry-over; the dialog explains why.
+- **Student dashboard**: `GET /api/admin/students/[regNumber]` now returns only the student's level courses plus approved carry-overs when a student views their own record, so course counts and the overall rate no longer include other levels. Admin lookups still show every course.
+- Deleting a course also deletes its enrolments (`src/app/api/classes/route.ts`).
+- Existing records of students who are not in a course's level and have no approved carry-over are kept in Firestore but no longer listed in that course's exports.
+
+### Edit a student's name (any admin)
+- **Students page**: pencil beside the name after a search. **`EditStudentNameDialog.tsx`** (new).
+- **`src/app/api/admin/students/[regNumber]/route.ts`**: new `PATCH { name }` (2–100 chars, whitespace collapsed). Updates the student doc, the linked `users` doc and the Firebase Auth display name so the name matches everywhere. Logged as `edit_student_name` with the old and new name.
+
+### Courses restricted by department
+A course can now be limited to **Political Science** (reg codes 133/134), **Political Science Education** (165/164), or left open to both. This works together with levels: a student sees a course only if their level **and** department match (or it has an approved carry-over).
+- `src/constants/academics.ts`: `DEPARTMENTS` (id, label, codes). `src/lib/admission.ts`: `departmentOf`, `courseVisibleToDepartment`, `parseDepartments`, `courseVisibleToStudent`.
+- Courses carry `departments: string[]` (`pol` / `edu`). **Empty = open to every department**, so existing courses behave as before.
+- **Classes page**: pick departments when creating a course (**`DepartmentPicker.tsx`**, new); everyone sees the selected course's departments; super admins get **Edit Audience** (levels and departments together). `/api/courses` `POST`/`PATCH` validate `departments` (super admins only).
+- Applied everywhere levels were: Mark page list, `/api/mark` (server check, `WRONG_LEVEL`), student dashboard, admin export roster, Mark present eligibility, and the public `/api/mark/status` payload.
+- **Carry-overs don't cross departments**: a student can only apply for courses offered to their own department (`/api/mark/carryover`).
+- `src/lib/enrollment.ts`: `isEligibleForCourse` now takes the course's audience; new `audienceOf` helper.
+
+### Registration numbers
+- Department codes 165 (Political Science Education, regular) and 164 (Political Science Education, CEP) are now accepted alongside 133 (full-time) and 134 (part-time) (`REG_NUMBER_REGEX` in `src/lib/utils.ts`, the single check used by sign-up and every API route). Format hints and error messages updated in `register/page.tsx`, `MarkButton.tsx` and `RegNumberForm.tsx`.
+
+### Notes
+- No new Firestore indexes needed. No new dependencies (jsPDF and autotable were already installed).
+- A class's date is the UTC date stored when it started (same as Revoke a day), so a class held very late at night could appear under the next UTC day.
+
+## v2.2.0 — Grant-admin endpoint + courses assigned to levels
+
+### Fix: `POST /api/admin/add` returned 404
+The Admin Management page (`/admin`) calls `/api/admin/add`, which didn't exist. The Manage Admins page (`/admin/add`) called `POST /api/admin` (also missing, so it would 405) and revoked by email while `DELETE /api/admin` only understood `uid`.
+- **`src/app/api/admin/add/route.ts`** (new): `POST { email, scope?, assignedCourses? }`, super admins only. Looks up the DARS account by email (users collection, then Firebase Auth), refuses unknown, banned or already-admin accounts, then sets `admin`, `scope` and `assignedCourses` and keeps each course's `assignedAdmins` in sync in one atomic batch. Default scope is `defined` with no courses, so a bare-email grant never creates a super admin by accident. Logged to `activityLog` as `grant_admin`.
+- **`src/lib/admin-grant.ts`** (new): the shared logic (`grantAdmin`, `resolveAdminTarget`, `clearCourseAssignments`).
+- **`src/app/api/admin/route.ts`**: added `POST` (same handler, serves the Manage Admins page). `DELETE` now accepts `uid` or `email`, and removes the revoked admin from every course's `assignedAdmins` (stale entries were left behind before).
+- **`src/app/admin/page.tsx`**: after a bare-email grant the toast tells you to use Edit Role to assign courses.
+- **`src/app/admin/add/page.tsx`**: revoke no longer fires a pointless extra `verify-token` request and shows the server's error message.
+
+### Courses assigned to levels
+Level ("student class") = academic year from the admission year in the reg number, the same rule NPS uses (`src/lib/admission.ts` there): year = first four digits, steps up each **October**. Example on 22 Oct 2026: 2024xxxxxx is 300 Level, 2025 is 200, 2026 is 100. Clamped to 100–400 (programme length 4 years), so a student before their first October is 100 Level and a spill-over student stays on 400.
+- **`src/constants/academics.ts`** (new): session start month, programme length, selectable levels.
+- **`src/lib/admission.ts`** (new): `admissionYearOf`, `academicYear`, `levelOf`, `courseVisibleToLevel`, `parseLevels`.
+- **Courses** now carry `levels: number[]`. **Empty = open to every level**, so existing courses behave exactly as before until you assign them.
+- **`src/app/api/courses/route.ts`**: `POST` and `PATCH` accept and validate `levels` (super admins only, as before). `PATCH` also rejects empty updates.
+- **`src/components/admin/LevelPicker.tsx`** (new) and **`src/app/admin/create/page.tsx`**: pick levels when creating a course; every admin sees the selected course's levels; super admins get **Edit Levels**.
+- **`src/app/api/mark/status/route.ts`**, **`src/app/mark/page.tsx`**: the student's course list is filtered to their level and the header shows it (e.g. "300 Level"). Students with no usable reg number (e.g. an admin) still see everything.
+- **`src/app/api/mark/route.ts`**: enforced on the server too. A self-mark for a course outside the student's level is rejected with `WRONG_LEVEL` (403). Course levels are cached 30 s per server instance. Admin "Mark for another student" skips this check, like the device check.
+- **`src/components/mark/CourseSelector.tsx`**: empty state reads "No courses are available for your level yet."
+
+### Notes
+- Changing a course's levels can take up to ~30 s to reach a running server instance (mark check) and a few seconds for the student list.
+- No new Firestore indexes are needed (single-field queries only).
+
+## v2.1.0 — Location reliability + faster check-in for a full lecture hall
+
+### Why locations failed on some phones (root causes)
+1. **One-shot GPS.** The old `LocationGate` and `MarkButton` each called `getCurrentPosition()` once (high accuracy, 15 s timeout, no cache). A cold GPS indoors often can't lock in 15 s (Android: "Couldn't get your location"), or returns a rough first fix (iPhone: "signal too weak/imprecise", server cap is 150 m). A timeout was also reported as "turn on GPS" even when location was on.
+2. **Two cold fixes per check-in.** The fix taken at page load was thrown away; tapping *Mark* started a second cold fix with `maximumAge: 0`. That second wait is the long delay after the courses appear, and a second chance to fail.
+3. **Hard gate before anything else.** Courses were hidden behind the location screen until a fix arrived.
+
+### Location (client)
+- **`src/hooks/useLocationFix.ts`** (new): starts a live GPS watch as soon as the student is signed in and keeps the best fresh reading. If GPS hasn't produced a usable reading after 5 s it adds a Wi-Fi/cell watch in parallel. `waitForFix()` returns instantly when a good reading exists, otherwise waits up to 15 s and sends the best it has. Only a permission denial is treated as final.
+- **`src/components/mark/LocationStatus.tsx`** (new): non-blocking pill ("Finding your location…", "Location ready · ±24 m", "Improving signal…", Retry).
+- **`src/components/mark/LocationGate.tsx`**: now shown only when location is denied or unsupported, with iPhone/Android steps to re-enable it.
+- **`src/constants/location.ts`** (new): all thresholds in one place.
+
+### Faster marking
+- **`src/components/mark/MarkButton.tsx`**: uses the live fix (no second cold fix); device fingerprint and auth token are prepared while the fix settles; progress text under the button; 20 s request timeout; up to 2 retries on network/502-504 errors. If a retry hits `DUPLICATE` the student sees success instead of an error (the first response was just lost).
+- **`src/app/api/mark/route.ts`**: reads cut from 4 sequential rounds to 3 (user + class together, then student + duplicate + device claims + location together); location tag cached 60 s per server instance; ban check reuses the caller's user doc; `courseId` validated as a string. `DUPLICATE` now returns `name`, `late`, `timestamp`.
+- **Rate limiting:** was 20 requests/min **per IP**, which a whole class sharing campus Wi-Fi or one mobile-carrier IP would hit. Now 600/min per IP (flood guard) plus 15/min per account.
+- **Accuracy rule:** a fix worse than 150 m is now accepted if its whole uncertainty circle is inside the class radius (`distance + accuracy ≤ radius`), i.e. provably in range. Hard ceiling 500 m. Fixes ≤ 150 m behave exactly as before.
+- **`src/app/api/mark/status/route.ts`** (new) + **`src/hooks/useMarkStatus.ts`** (new): courses and class state in one request instead of two, 4 s server-side shared snapshot with in-flight de-duplication, short CDN cache, only public fields returned. The page shows the last snapshot instantly (< 2 min old), polls only while visible, and refreshes when the student returns to the app.
+- **`src/lib/ttl-cache.ts`** (new): small TTL cache with request de-duplication.
+- **`src/lib/auth-context.tsx`**: last profile cached per user so the app opens instantly and refreshes in the background; on a network failure the cached profile stays instead of showing "Sign in required". Cleared on logout/ban. Display only; the server still enforces permissions.
+- **`src/components/ui/PageTransition.tsx`**: the splash plays once per session instead of on every page change (it was adding ~1.7 s to every navigation).
+- **`src/app/mark/page.tsx`**: wired to the above; stable `onExpired` callback so the countdown doesn't reset on every GPS update.
+
+### Notes
+- `/api/courses` and `/api/globals` are unchanged (admin pages still use them); the student page no longer calls them.
+- Location tag edits can take up to 60 s to reach a running server instance.
+
 ## v2.0.5 — Revoke a student's attendance for a day + Admin Reset
 
 ### Revoke attendance for a day (any admin)

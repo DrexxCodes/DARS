@@ -5,7 +5,7 @@ import { Button, Input } from "@/components/ui";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { clientAuth } from "@/lib/firebase-client";
-import { getFreshPosition } from "@/lib/geolocation-client";
+import type { LocationApi, GeoErrorKind } from "@/hooks/useLocationFix";
 import { getDeviceSignals } from "@/lib/device-fingerprint";
 import { haptic } from "@/lib/haptics";
 import { CheckCircle2, UserCog } from "lucide-react";
@@ -13,11 +13,29 @@ import { CheckCircle2, UserCog } from "lucide-react";
 interface MarkButtonProps {
   courseId: string;
   courseName: string;
+  location: Pick<LocationApi, "waitForFix" | "retry">;
   onSuccess: (result: { name: string; late: boolean; timestamp: number }) => void;
   onNotFound: () => void;
 }
 
-export default function MarkButton({ courseId, courseName, onSuccess, onNotFound }: MarkButtonProps) {
+const MAX_RETRIES = 2;
+const REQUEST_TIMEOUT_MS = 20_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function geoMessage(kind?: GeoErrorKind): string {
+  switch (kind) {
+    case "denied":
+      return "Location access was denied. Enable it in your phone or browser's site settings and try again.";
+    case "weak":
+      return "Your GPS signal is too weak right now. Move near a window or step outside for a few seconds, then tap again.";
+    case "unsupported":
+      return "Your browser doesn't support location services. Try a different browser.";
+    default:
+      return "Couldn't get your location. Turn on Location (High accuracy) on your phone and try again.";
+  }
+}
+
+export default function MarkButton({ courseId, courseName, location, onSuccess, onNotFound }: MarkButtonProps) {
   const { profile } = useAuth();
   const isAdmin = profile?.admin === true;
 
@@ -25,6 +43,7 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
   const [useOverride, setUseOverride] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [phase, setPhase] = useState<"locating" | "sending">("locating");
 
   // Compute the fingerprint ahead of time so tapping "Mark" never waits on it
   useEffect(() => {
@@ -39,55 +58,100 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
     if (isAdmin && useOverride) {
       const normalized = normalizeRegNumber(overrideReg);
       if (!validateRegNumber(normalized)) {
-        setError("Invalid format. Expected e.g. 2023133001 or 2022134005");
+        setError("Invalid format. Expected e.g. 2023133001 or 2016522005");
         return;
       }
       regNumber = normalized;
     }
 
     setLoading(true);
+    setPhase("locating");
     try {
-      // Take a fresh GPS fix at the moment of marking (not the one from page load)
+      // Device signals + auth token are prepared while the location fix settles, so nothing waits on them afterwards.
+      const signalsP = getDeviceSignals().catch(() => null);
+      const tokenP = clientAuth.currentUser?.getIdToken().catch(() => undefined);
+
+      // The live watch from the page usually has a precise fix ready already, so this is normally instant.
       let fix;
       try {
-        fix = await getFreshPosition();
+        fix = await location.waitForFix();
       } catch (e) {
-        const kind = (e as { kind?: string }).kind;
-        setError(
-          kind === "denied"
-            ? "Location access was denied. Enable it in your browser's site settings and try again."
-            : "Couldn't get your location. Turn on GPS/location services and try again."
-        );
+        setError(geoMessage((e as { kind?: GeoErrorKind }).kind));
         return;
       }
 
-      const signals = await getDeviceSignals().catch(() => null);
-      const token = await clientAuth.currentUser?.getIdToken();
-      const res = await fetch("/api/mark", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ courseId, lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy, ...(signals ?? {}), ...(regNumber ? { regNumber } : {}) }),
+      const [signals, token] = await Promise.all([signalsP, tokenP]);
+      if (!token) {
+        setError("Your session has expired. Please sign in again.");
+        return;
+      }
+
+      setPhase("sending");
+      const body = JSON.stringify({
+        courseId,
+        lat: fix.lat,
+        lng: fix.lng,
+        accuracy: fix.accuracy,
+        ...(signals ?? {}),
+        ...(regNumber ? { regNumber } : {}),
       });
 
-      const data = await res.json();
+      // Campus networks drop requests. Retry network failures / gateway errors; the server is idempotent
+      // (create() + duplicate check), so a retry after a lost response can't double-mark.
+      for (let attempt = 0; ; attempt++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        let res: Response;
+        try {
+          res = await fetch("/api/mark", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body,
+            signal: controller.signal,
+          });
+        } catch {
+          clearTimeout(timeout);
+          if (attempt < MAX_RETRIES) {
+            await sleep(700 * (attempt + 1));
+            continue;
+          }
+          setError("Network error. Please check your connection.");
+          return;
+        }
+        clearTimeout(timeout);
 
-      if (res.status === 404 && data.code === "NOT_FOUND") {
-        onNotFound();
+        if (res.status >= 502 && res.status <= 504 && attempt < MAX_RETRIES) {
+          await sleep(700 * (attempt + 1));
+          continue;
+        }
+
+        const data = await res.json().catch(() => ({}));
+
+        // The first attempt actually went through but its response was lost: treat the duplicate as success.
+        if (res.status === 409 && data.code === "DUPLICATE" && attempt > 0 && data.name) {
+          haptic([30, 60, 30]);
+          onSuccess({ name: data.name, late: !!data.late, timestamp: data.timestamp });
+          setOverrideReg("");
+          return;
+        }
+
+        if (res.status === 404 && data.code === "NOT_FOUND") {
+          onNotFound();
+          return;
+        }
+
+        if (!res.ok) {
+          haptic([60, 40, 60]);
+          setError(data.error || "Something went wrong. Please try again.");
+          if (data.code === "LOW_ACCURACY") location.retry(); // start a fresh, precise reading for the next tap
+          return;
+        }
+
+        haptic([30, 60, 30]);
+        onSuccess({ name: data.name, late: data.late, timestamp: data.timestamp });
+        setOverrideReg("");
         return;
       }
-
-      if (!res.ok) {
-        haptic([60, 40, 60]);
-        setError(data.error || "Something went wrong. Please try again.");
-        return;
-      }
-
-      haptic([30, 60, 30]);
-      onSuccess({ name: data.name, late: data.late, timestamp: data.timestamp });
-      setOverrideReg("");
     } catch {
       setError("Network error. Please check your connection.");
     } finally {
@@ -128,7 +192,7 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
               onChange={(e) => { setOverrideReg(e.target.value); setError(""); }}
               error={error}
               onKeyDown={(e) => e.key === "Enter" && handleMark()}
-              hint="Format: 20YY133XXX or 20YY134XXX"
+              hint="Format: 20YY133XXX, 20YY134XXX, 20YY165XXX or 20YY164XXX"
               autoFocus
               className="font-mono text-center tracking-widest text-lg"
             />
@@ -149,6 +213,11 @@ export default function MarkButton({ courseId, courseName, onSuccess, onNotFound
       >
         Mark Attendance
       </Button>
+      {loading && (
+        <p className="text-xs text-slate-400 dark:text-slate-500 text-center -mt-2" role="status">
+          {phase === "locating" ? "Getting a precise location…" : "Marking your attendance…"}
+        </p>
+      )}
     </div>
   );
 }

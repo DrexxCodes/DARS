@@ -24,7 +24,7 @@ export default function RegNumberForm({ courseId, courseName, lat, lng, onSucces
     const normalized = normalizeRegNumber(regNumber);
 
     if (!validateRegNumber(normalized)) {
-      setError("Invalid format. Expected e.g. 2023133001 or 2022134005");
+      setError("Invalid format. Expected e.g. 2023133001 or 2016522005");
       return;
     }
 
@@ -76,7 +76,7 @@ export default function RegNumberForm({ courseId, courseName, lat, lng, onSucces
         }}
         error={error}
         onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        hint="Format: 20YY133XXX or 20YY134XXX"
+        hint="Format: 20YY133XXX, 20YY134XXX, 20YY165XXX or 20YY164XXX"
         autoFocus
         className="font-mono text-center tracking-widest text-lg"
       />

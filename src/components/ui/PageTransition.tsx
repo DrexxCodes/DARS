@@ -1,41 +1,39 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import Preloader from "@/components/ui/Preloader";
 
+const SEEN_KEY = "dars:preloader-seen";
+
+/**
+ * The splash plays once per app session (first load), not on every page change. Previously each navigation hid the
+ * page behind a ~1.7 s animation, which made every tap in the app feel slow.
+ */
 export default function PageTransition({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   const [showPreloader, setShowPreloader] = useState(true);
-  const [displayChildren, setDisplayChildren] = useState(children);
-  const prevPathname = useRef<string | null>(null);
 
-  // On first load
   useEffect(() => {
-    prevPathname.current = pathname;
-  }, []);
-
-  // On route change
-  useEffect(() => {
-    if (prevPathname.current !== null && prevPathname.current !== pathname) {
-      setShowPreloader(true);
+    try {
+      if (sessionStorage.getItem(SEEN_KEY)) {
+        setShowPreloader(false);
+        return;
+      }
+      sessionStorage.setItem(SEEN_KEY, "1");
+    } catch {
+      // storage blocked: just play it once for this load
     }
-    prevPathname.current = pathname;
-    setDisplayChildren(children);
-  }, [pathname, children]);
+  }, []);
 
   return (
     <>
-      {showPreloader && (
-        <Preloader onComplete={() => setShowPreloader(false)} />
-      )}
+      {showPreloader && <Preloader onComplete={() => setShowPreloader(false)} />}
       <div
         style={{
           opacity: showPreloader ? 0 : 1,
           transition: "opacity 0.3s ease",
         }}
       >
-        {displayChildren}
+        {children}
       </div>
     </>
   );

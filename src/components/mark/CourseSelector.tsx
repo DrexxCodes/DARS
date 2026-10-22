@@ -19,9 +19,11 @@ interface CourseSelectorProps {
   selected: string | null;
   onSelect: (id: string) => void;
   loading: boolean;
+  /** Courses the student takes as an approved carry-over (tagged in the list). */
+  carryoverIds?: Set<string>;
 }
 
-export default function CourseSelector({ courses, globals, selected, onSelect, loading }: CourseSelectorProps) {
+export default function CourseSelector({ courses, globals, selected, onSelect, loading, carryoverIds }: CourseSelectorProps) {
   if (loading) {
     return (
       <div className="grid gap-3">
@@ -34,7 +36,7 @@ export default function CourseSelector({ courses, globals, selected, onSelect, l
     return (
       <div className="text-center py-10 text-slate-400 dark:text-slate-500">
         <BookOpen className="w-10 h-10 mx-auto mb-2 opacity-40" />
-        <p className="text-sm">No active courses available.</p>
+        <p className="text-sm">No courses are available for your level yet.</p>
       </div>
     );
   }
@@ -72,7 +74,9 @@ export default function CourseSelector({ courses, globals, selected, onSelect, l
                 </div>
                 <div>
                   <p className="font-semibold text-slate-900 dark:text-white text-sm">{course.name}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">{course.code}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                    {course.code}{carryoverIds?.has(course.id) && <span className="ml-2 font-sans text-blue-600 dark:text-blue-400">Carry-over</span>}
+                  </p>
                 </div>
               </div>
               <div className="shrink-0">

@@ -280,6 +280,10 @@ export async function DELETE(req: NextRequest) {
     await deleteInBatches(sessionsSnap.docs.map((d) => d.ref));
     await db.collection("classes").doc(courseId).delete().catch(() => {});
 
+    // 1b. Delete carry-over enrolments
+    const enrolSnap = await db.collection("courses").doc(courseId).collection("enrollments").get();
+    await deleteInBatches(enrolSnap.docs.map((d) => d.ref));
+
     // 2. Delete globals doc
     await db.collection("globals").doc(courseId).delete().catch(() => {});
 

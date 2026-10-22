@@ -31,6 +31,31 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// Last known profile per user, so reopening the app renders instantly instead of waiting on a server round trip.
+// Display only: every API route re-checks the real permissions on the server, and the profile is refreshed right after.
+const PROFILE_CACHE_PREFIX = "dars:profile:";
+
+function readCachedProfile(uid: string): UserProfile | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_PREFIX + uid);
+    return raw ? (JSON.parse(raw) as UserProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedProfile(profile: UserProfile) {
+  try {
+    localStorage.setItem(PROFILE_CACHE_PREFIX + profile.uid, JSON.stringify(profile));
+  } catch {}
+}
+
+function clearCachedProfile(uid: string) {
+  try {
+    localStorage.removeItem(PROFILE_CACHE_PREFIX + uid);
+  } catch {}
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -45,13 +70,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         setProfile(data.user);
+        writeCachedProfile(data.user as UserProfile);
         return data.user as UserProfile;
       }
+      // The server answered and says there is no usable profile: drop any cached copy.
+      clearCachedProfile(firebaseUser.uid);
       setProfile(null);
       return null;
     } catch {
-      setProfile(null);
-      return null;
+      // Network failure: keep showing the cached profile if there is one instead of signing the student out of the UI.
+      const cached = readCachedProfile(firebaseUser.uid);
+      if (!cached) setProfile(null);
+      return cached;
     }
   }, []);
 
@@ -63,7 +93,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = onAuthStateChanged(clientAuth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        // Keep "loading" true until the profile arrives, otherwise pages see
+        const cached = readCachedProfile(firebaseUser.uid);
+        if (cached && !cached.banned) {
+          // Render immediately from the cached profile, then refresh it in the background.
+          setProfile(cached);
+          setLoading(false);
+          void fetchProfile(firebaseUser);
+          return;
+        }
+        // No cache: keep "loading" true until the profile arrives, otherwise pages see
         // (loading=false, profile=null) and bounce the user back to /auth/login.
         setLoading(true);
         await fetchProfile(firebaseUser);
@@ -85,12 +123,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw Object.assign(new Error("Profile not found"), { code: "auth/profile-missing" });
     }
     if (p.banned) {
+      clearCachedProfile(cred.user.uid);
       await signOut(clientAuth);
       throw Object.assign(new Error("Account banned"), { code: "auth/user-banned" });
     }
   };
 
   const logout = async () => {
+    if (user) clearCachedProfile(user.uid);
     await signOut(clientAuth);
     setProfile(null);
   };

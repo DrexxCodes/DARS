@@ -68,21 +68,13 @@ export default function AdminAddPage() {
   const handleRevokeAdmin = async () => {
     if (!adminEmail) { toast.error("Enter the user's email first"); return; }
     try {
-      // First look up uid from email
       const token = await getToken();
-      const searchRes = await fetch(`/api/auth/verify-token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: adminEmail }),
-      });
-      // Simplified: call admin DELETE with email
       const res = await fetch("/api/admin", {
         method: "DELETE",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ email: adminEmail }),
       });
-      void searchRes;
-      if (!res.ok) { toast.error("User not found or revoke failed"); return; }
+      if (!res.ok) { const data = await res.json().catch(() => ({})); toast.error(data.error || "User not found or revoke failed"); return; }
       toast.success("Admin access revoked");
       setAdminEmail("");
     } catch { toast.error("Revoke failed."); }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
+import { grantAdmin, resolveAdminTarget, clearCourseAssignments } from "@/lib/admin-grant";
 
 interface AdminUser {
   uid: string;
@@ -36,6 +37,17 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("Get admins error:", error);
     return NextResponse.json({ error: "Failed to fetch admins" }, { status: 500 });
+  }
+}
+
+// POST /api/admin — grant admin access by email (same handler as /api/admin/add; the Manage Admins page uses this path)
+export async function POST(req: NextRequest) {
+  try {
+    const { status, body } = await grantAdmin(req);
+    return NextResponse.json(body, { status });
+  } catch (error) {
+    console.error("Grant admin error:", error);
+    return NextResponse.json({ error: "Failed to grant admin access." }, { status: 500 });
   }
 }
 
@@ -91,12 +103,14 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
   }
   try {
-    const { uid } = await req.json();
-    if (!uid) return NextResponse.json({ error: "uid required" }, { status: 400 });
+    // Accepts either { uid } (Admin Management page) or { email } (Manage Admins page)
+    const uid = await resolveAdminTarget(await req.json());
+    if (!uid) return NextResponse.json({ error: "No account found for that admin." }, { status: 404 });
     if (uid === adminUser.uid) {
       return NextResponse.json({ error: "You cannot revoke your own access." }, { status: 400 });
     }
     await db.collection("users").doc(uid).update({ admin: false, scope: null, assignedCourses: [] });
+    await clearCourseAssignments(uid);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Delete admin error:", error);

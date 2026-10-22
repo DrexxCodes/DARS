@@ -107,7 +107,11 @@ export default function AdminManagePage() {
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error); return; }
-      toast.success(`Admin access granted to ${email}`);
+      toast.success(
+        data.scope === "super"
+          ? `Admin access granted to ${email}`
+          : `${email} is now a scoped admin. Use Edit Role to assign their courses.`
+      );
       setEmail("");
       fetchData();
     } catch { toast.error("Failed to add admin."); } finally { setAddingAdmin(false); }
