@@ -3,6 +3,7 @@ import { db } from "@/lib/firebase-admin";
 import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
 import { courseVisibleToStudent } from "@/lib/admission";
 import { audienceOf, enrollmentsCol } from "@/lib/enrollment";
+import { excludedRegNumbers } from "@/lib/export-exclusion";
 import type { CourseExportData, ExportRecord, ExportSession, ExportStudent } from "@/types/admin";
 
 export const maxDuration = 60;
@@ -31,11 +32,12 @@ export async function GET(req: NextRequest) {
     const [course] = await getAccessibleCourses(admin, courseId);
     if (!course) return NextResponse.json({ error: "You don't have access to that course." }, { status: 403 });
 
-    const [courseDoc, sessionsSnap, studentsSnap, approvedSnap] = await Promise.all([
+    const [courseDoc, sessionsSnap, studentsSnap, approvedSnap, excluded] = await Promise.all([
       db.collection("courses").doc(courseId).get(),
       db.collection("classes").doc(courseId).collection("sessions").orderBy("createdAt", "asc").get(),
       db.collection("students").select("name").get(),
       enrollmentsCol(courseId).where("status", "==", "approved").get(),
+      excludedRegNumbers(),
     ]);
 
     const audience = audienceOf(courseDoc.data());
@@ -63,6 +65,7 @@ export async function GET(req: NextRequest) {
     // none set) plus students with an approved carry-over. Other students never appear, even if they have a record.
     const carryovers = new Set(approvedSnap.docs.map((d) => d.id));
     const toRead = studentsSnap.docs
+      .filter((d) => !excluded.has(d.id.toUpperCase())) // admins who opted out of exports
       .filter((d) => courseVisibleToStudent(audience, d.id) || carryovers.has(d.id))
       .map((d) => ({ regNumber: d.id, name: String(d.data().name ?? "") }));
 

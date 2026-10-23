@@ -83,12 +83,20 @@ export async function GET(
     }
 
     const isDefinedAdmin = user.admin && user.scope === "defined";
+    const isSelf = user.regNumber === regNumber;
+
+    // Does the student actually take each course? Their level/department, or an approved carry-over.
+    // (Self view is already filtered above, so everything there is offered.) Only read carry-overs for courses this
+    // admin can see and that are off the student's level, so scoped admins pay for nothing extra.
+    const inView = (c: Course) => !isDefinedAdmin || (c.assignedAdmins || []).includes(decoded.uid);
+    const offLevel = isSelf ? [] : courses.filter((c) => inView(c) && !courseVisibleToStudent(c, regNumber));
+    const enrol = offLevel.length ? await db.getAll(...offLevel.map((c) => enrollmentRef(c.id, regNumber))) : [];
+    const carryover = new Set(offLevel.filter((_, i) => enrol[i].exists && enrol[i].data()?.status === "approved").map((c) => c.id));
+    const offered = (c: Course) => isSelf || courseVisibleToStudent(c, regNumber) || carryover.has(c.id);
 
     const attendanceData = await Promise.all(
       courses.map(async (course) => {
-        const isAssigned = !isDefinedAdmin || (course.assignedAdmins || []).includes(decoded.uid);
-
-        if (!isAssigned) {
+        if (!inView(course)) {
           // Return locked entry — no Firestore reads needed
           return {
             courseId: course.id,
@@ -98,17 +106,20 @@ export async function GET(
             total: 0,
             percentage: 0,
             locked: true, // scoped admin cannot see this
+            offered: false,
           };
         }
 
-        const recordsSnap = await db
+        // Server-side count: Firestore bills 1 read per 1,000 matching records (minimum 1) instead of 1 per record,
+        // and the number is exactly what reading every record and taking .size would give.
+        const countSnap = await db
           .collection("students").doc(regNumber)
           .collection("attendance").doc(course.id)
-          .collection("records").get();
+          .collection("records").count().get();
 
         // Use denormalized counter
         const total: number = course.totalClasses ?? 0;
-        const attended = recordsSnap.size;
+        const attended = countSnap.data().count;
 
         return {
           courseId: course.id,
@@ -118,13 +129,26 @@ export async function GET(
           total,
           percentage: total > 0 ? Math.round((attended / total) * 100) : 0,
           locked: false,
+          offered: offered(course),
         };
       })
     );
 
+    // Overall rate across the courses the student offers (and the admin can see): total attended / total held.
+    const counted = attendanceData.filter((c) => !c.locked && c.offered);
+    const overallAttended = counted.reduce((n, c) => n + c.attended, 0);
+    const overallTotal = counted.reduce((n, c) => n + c.total, 0);
+    const overall = {
+      attended: overallAttended,
+      total: overallTotal,
+      percentage: overallTotal > 0 ? Math.round((overallAttended / overallTotal) * 100) : 0,
+      courses: counted.length,
+    };
+
     return NextResponse.json({
       student: { regNumber, ...student },
       courses: attendanceData,
+      overall,
     });
   } catch (error) {
     console.error("Student attendance error:", error);

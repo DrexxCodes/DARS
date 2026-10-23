@@ -20,7 +20,10 @@ interface CourseAttendance {
   total: number;
   percentage: number;
   locked: boolean;
+  /** The student takes this course (their level/department, or an approved carry-over). */
+  offered?: boolean;
 }
+interface Overall { attended: number; total: number; percentage: number; courses: number }
 interface StudentResult {
   regNumber: string;
   name: string;
@@ -35,6 +38,7 @@ export default function StudentSearchPage() {
   const [searching, setSearching] = useState(false);
   const [student, setStudent] = useState<StudentResult | null>(null);
   const [courses, setCourses] = useState<CourseAttendance[]>([]);
+  const [overall, setOverall] = useState<Overall | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [markOpen, setMarkOpen] = useState(false);
   const [editNameOpen, setEditNameOpen] = useState(false);
@@ -51,6 +55,7 @@ export default function StudentSearchPage() {
     setSearching(true);
     setStudent(null);
     setCourses([]);
+    setOverall(null);
     try {
       const token = await getToken();
       const res = await fetch(`/api/admin/students/${reg}`, {
@@ -63,6 +68,7 @@ export default function StudentSearchPage() {
       }
       setStudent({ regNumber: reg, ...data.student });
       setCourses(data.courses || []);
+      setOverall(data.overall ?? null);
     } catch {
       toast.error("Search failed.");
     } finally {
@@ -72,7 +78,10 @@ export default function StudentSearchPage() {
 
   if (authLoading || !profile?.admin) return null;
 
-  const assignedCourses = courses.filter((c) => !c.locked);
+  const visibleCourses = courses.filter((c) => !c.locked);
+  const assignedCourses = visibleCourses.filter((c) => c.offered !== false); // courses the student actually takes
+  const notOffered = visibleCourses.filter((c) => c.offered === false);
+  const overallStatus = overall ? getAttendanceStatus(overall.percentage, overall.total) : null;
   const lockedCourses = courses.filter((c) => c.locked);
 
   return (
@@ -145,6 +154,20 @@ export default function StudentSearchPage() {
         </Card>
       )}
 
+      {!searching && student && overall && overall.courses > 0 && overallStatus && (
+        <Card className={`p-4 flex items-center justify-between gap-4 ${overallStatus.card}`}>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Overall attendance</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {overall.attended} / {overall.total} classes across {overall.courses} course{overall.courses === 1 ? "" : "s"} you manage
+            </p>
+          </div>
+          <Badge variant={overallStatus.badge}>
+            {overall.total === 0 ? overallStatus.label : `${overall.percentage}% · ${overallStatus.label}`}
+          </Badge>
+        </Card>
+      )}
+
       {searching && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-28" />)}
@@ -155,7 +178,7 @@ export default function StudentSearchPage() {
         <>
           {assignedCourses.length > 0 && (
             <div className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Your Courses</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Courses this student takes</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {assignedCourses.map((c) => {
                   const status = getAttendanceStatus(c.percentage, c.total);
@@ -194,6 +217,20 @@ export default function StudentSearchPage() {
                     </Card>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {notOffered.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Not offered by this student</p>
+              <p className="text-xs text-slate-400 px-1">Your courses outside their level or department, with no approved carry-over. Not counted in the overall rate.</p>
+              <div className="flex flex-wrap gap-2">
+                {notOffered.map((c) => (
+                  <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
+                    {c.courseCode}{c.attended > 0 ? ` · ${c.attended} record${c.attended === 1 ? "" : "s"}` : ""}
+                  </span>
+                ))}
               </div>
             </div>
           )}

@@ -17,6 +17,8 @@ export interface UserProfile {
   admin: boolean;
   scope?: "super" | "defined";
   assignedCourses?: string[];
+  /** Admins only: leave this admin's own attendance records out of PDF exports. */
+  excludeFromExports?: boolean;
   banned: boolean;
 }
 

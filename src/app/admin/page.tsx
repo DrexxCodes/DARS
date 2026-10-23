@@ -7,6 +7,8 @@ import { Card, Button, Badge, Input, Select, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
 import { UserCog, Mail, BookOpen, Shield, ShieldOff, Lock } from "lucide-react";
+import { useExportVisibility } from "@/hooks/useExportVisibility";
+import ExportVisibilityToggle from "@/components/admin/ExportVisibilityToggle";
 
 interface AdminRecord {
   uid: string;
@@ -14,11 +16,13 @@ interface AdminRecord {
   email: string;
   scope?: "super" | "defined";
   assignedCourses?: string[];
+  regNumber?: string;
+  excludeFromExports?: boolean;
 }
 interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; }
 
 export default function AdminManagePage() {
-  const { profile, loading: authLoading } = useAuth();
+  const { profile, loading: authLoading, refreshProfile } = useAuth();
   const router = useRouter();
 
   const [admins, setAdmins] = useState<AdminRecord[]>([]);
@@ -28,6 +32,7 @@ export default function AdminManagePage() {
   const [editScope, setEditScope] = useState<"super" | "defined">("defined");
   const [editCourses, setEditCourses] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const { setExcluded, busyUid } = useExportVisibility();
 
   // Add admin
   const [email, setEmail] = useState("");
@@ -185,6 +190,21 @@ export default function AdminManagePage() {
                     )}
                   </div>
                 </div>
+
+                {/* Super admins can override whether this admin's own attendance shows in PDF exports */}
+                {admin.regNumber && (
+                  <ExportVisibilityToggle
+                    label="Hide this admin from attendance exports"
+                    checked={!!admin.excludeFromExports}
+                    busy={busyUid === admin.uid}
+                    onChange={async (next) => {
+                      if (await setExcluded(next, admin.uid)) {
+                        if (admin.uid === profile.uid) void refreshProfile();
+                        setAdmins((prev) => prev.map((a) => (a.uid === admin.uid ? { ...a, excludeFromExports: next } : a)));
+                      }
+                    }}
+                  />
+                )}
 
                 {/* Inline editor */}
                 {editingUid === admin.uid && (

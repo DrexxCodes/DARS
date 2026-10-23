@@ -5,6 +5,9 @@ import { toast } from "sonner";
 import { FileDown } from "lucide-react";
 import { Button, Card, Select } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
+import { useAuth } from "@/lib/auth-context";
+import { useExportVisibility } from "@/hooks/useExportVisibility";
+import ExportVisibilityToggle from "@/components/admin/ExportVisibilityToggle";
 import { formatDisplayDate } from "@/lib/utils";
 import { exportCourseAttendancePDF, exportDayAttendancePDF } from "@/lib/attendance-pdf";
 import type { CourseExportData } from "@/types/admin";
@@ -18,6 +21,8 @@ interface Props {
 export default function ExportAttendanceCard({ courseId, sessions }: Props) {
   const [scope, setScope] = useState("all"); // "all" or a YYYY-MM-DD day
   const [busy, setBusy] = useState(false);
+  const { profile, refreshProfile } = useAuth();
+  const { setExcluded, busyUid } = useExportVisibility();
 
   // Days that had a class, newest first. If the chosen day vanishes (course switched, class deleted) fall back to "all".
   const days = useMemo(() => [...new Set(sessions.map((s) => s.date).filter(Boolean))].sort().reverse(), [sessions]);
@@ -67,6 +72,16 @@ export default function ExportAttendanceCard({ courseId, sessions }: Props) {
           <Button loading={busy} onClick={download} icon={<FileDown className="w-4 h-4" />}>
             Download PDF
           </Button>
+        </div>
+      )}
+      {profile?.regNumber && (
+        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+          <ExportVisibilityToggle
+            checked={!!profile.excludeFromExports}
+            busy={busyUid === "self"}
+            onChange={async (next) => { if (await setExcluded(next)) await refreshProfile(); }}
+            hint="Your own records won't appear in any exported PDF. A super admin can also change this."
+          />
         </div>
       )}
     </Card>

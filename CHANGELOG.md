@@ -1,5 +1,22 @@
 # DARS Changelog
 
+## v2.4.0 — Hide admins from attendance exports, overall rate in Student Lookup
+
+### Admins can be left out of PDF exports
+An admin who is also a student can opt out of the attendance PDFs. While opted out, their own records (and their row) are left out of both the whole-course and one-day exports.
+- **`src/lib/export-exclusion.ts`** (new): `excludedRegNumbers()` returns the reg numbers of admins with `excludeFromExports: true` (one query on `admin == true`, no new index).
+- **`src/app/api/admin/export/route.ts`**: the roster drops those students, so their records never reach the PDF.
+- **`src/app/api/admin/export-visibility/route.ts`** (new): `PATCH { exclude, uid? }`. Any admin changes their own setting; **super admins can change it for any existing admin** (an admin's later choice replaces it). Logged to `activityLog` as `set_export_visibility`.
+- **UI**: a checkbox under **Export Attendance** on the Classes page (your own setting, shown only to admins with a reg number), and a per-admin checkbox on **Admin Management** for super admins. New `ExportVisibilityToggle.tsx`, `useExportVisibility.ts`; `UserProfile.excludeFromExports` added in `auth-context.tsx`.
+- Default is unchanged: nobody is hidden until they (or a super admin) choose it. Only affects exports; marking, revoking and the student's own dashboard are untouched.
+
+### Student Lookup (scoped admins)
+Verified: a scoped admin can look a student up by **reg number** and sees attendance only for their assigned courses (others show as Restricted). Gaps found and fixed:
+- Every assigned course was listed even if the student doesn't take it. `GET /api/admin/students/[regNumber]` now returns `offered` per course (level + department, or approved carry-over); courses the student doesn't offer move to **Not offered by this student**.
+- There was no overall rate. The response now has `overall` (attended / held across the offered courses the admin can see) and the page shows an **Overall attendance** card. Super admins get the same, across all offered courses.
+- Cheaper counting: attended classes per course now use Firestore `count()` instead of reading every record (1 read per course instead of up to one per class). Same value, no stored counters, nothing to backfill or drift.
+- Not changed: lookup is by exact reg number only (no name search).
+
 ## v2.3.0 — Attendance PDF export, admin "Mark present", edit student name
 
 ### Export attendance as PDF (any admin, own courses only)
