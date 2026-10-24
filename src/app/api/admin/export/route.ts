@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase-admin";
 import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
-import { courseVisibleToStudent } from "@/lib/admission";
+import { admissionTypeOf, courseVisibleToStudent, departmentOf, isValidRegNumber } from "@/lib/admission";
+import { ADMISSION_TYPES, DEPARTMENTS } from "@/constants/academics";
 import { audienceOf, enrollmentsCol } from "@/lib/enrollment";
 import { excludedRegNumbers } from "@/lib/export-exclusion";
 import type { CourseExportData, ExportRecord, ExportSession, ExportStudent } from "@/types/admin";
@@ -61,13 +62,24 @@ export async function GET(req: NextRequest) {
     }
     const sessionIds = new Set(sessions.map((s) => s.id));
 
-    // Strict roster: only students the course is for. That's the course's levels and departments (everyone if it has
-    // none set) plus students with an approved carry-over. Other students never appear, even if they have a record.
+    // Strict roster: only students the course is for. That's the course's levels, departments and admission types
+    // (everyone if none are set) plus students with an approved carry-over. Other students never appear, even if they
+    // have a record. A reg number that isn't valid (or whose department/admission type can't be read) is in no PDF.
     const carryovers = new Set(approvedSnap.docs.map((d) => d.id));
-    const toRead = studentsSnap.docs
+    const rank = <T extends { id: string }>(list: readonly T[], id: string | null) => {
+      const i = list.findIndex((x) => x.id === id);
+      return i === -1 ? list.length : i;
+    };
+    const toRead: ExportStudent[] = studentsSnap.docs
+      .filter((d) => isValidRegNumber(d.id))
       .filter((d) => !excluded.has(d.id.toUpperCase())) // admins who opted out of exports
       .filter((d) => courseVisibleToStudent(audience, d.id) || carryovers.has(d.id))
-      .map((d) => ({ regNumber: d.id, name: String(d.data().name ?? "") }));
+      .map((d) => ({
+        regNumber: d.id,
+        name: String(d.data().name ?? ""),
+        department: departmentOf(d.id)!,
+        admissionType: admissionTypeOf(d.id)!,
+      }));
 
     const records: Record<string, Record<string, ExportRecord>> = {};
 
@@ -91,7 +103,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const students: ExportStudent[] = toRead.sort((a, b) => a.regNumber.localeCompare(b.regNumber));
+    // Grouped by department (Political Science, then Education), Regular before CEP, then reg number.
+    const students: ExportStudent[] = toRead.sort(
+      (a, b) =>
+        rank(DEPARTMENTS, a.department) - rank(DEPARTMENTS, b.department) ||
+        rank(ADMISSION_TYPES, a.admissionType) - rank(ADMISSION_TYPES, b.admissionType) ||
+        a.regNumber.localeCompare(b.regNumber)
+    );
 
     return NextResponse.json({ ...payloadBase, sessions, students, records } satisfies CourseExportData);
   } catch (error) {

@@ -6,6 +6,8 @@ export interface Course {
   levels?: number[];
   /** Departments this course is restricted to (department ids). Empty or missing = open to every department. */
   departments?: string[];
+  /** Admission types this course is for ("regular", "cep"). Empty or missing = both. */
+  admissionTypes?: string[];
 }
 
 export interface GlobalState {

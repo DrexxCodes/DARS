@@ -25,7 +25,11 @@ export const NOT_ENROLLED_MESSAGE =
   "This course isn't for your level. If it's a carry-over, apply for it and wait for an admin to approve.";
 
 /** Reads the audience fields off a course document's data. */
-export const audienceOf = (data: FirebaseFirestore.DocumentData | undefined): { levels: number[]; departments: string[] } => ({
+export const audienceOf = (
+  data: FirebaseFirestore.DocumentData | undefined
+): { levels: number[]; departments: string[]; admissionTypes: string[] } => ({
   levels: Array.isArray(data?.levels) ? (data!.levels as number[]) : [],
   departments: Array.isArray(data?.departments) ? (data!.departments as string[]) : [],
+  // Empty/missing = for both regular and CEP, so existing courses keep working until someone sets it.
+  admissionTypes: Array.isArray(data?.admissionTypes) ? (data!.admissionTypes as string[]) : [],
 });

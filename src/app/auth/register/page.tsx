@@ -25,7 +25,7 @@ export default function RegisterPage() {
     if (!form.email) e.email = "Email is required";
     if (!form.regNumber) e.regNumber = "Registration number is required";
     else if (!validateRegNumber(normalizeRegNumber(form.regNumber))) {
-      e.regNumber = "Invalid format. Must be e.g. 2023133001 or 2016522005";
+      e.regNumber = "Invalid format. Must be e.g. 2023134001 or 2023174001";
     }
     if (!form.password) e.password = "Password is required";
     else if (form.password.length < 6) e.password = "Password must be at least 6 characters";
@@ -106,7 +106,7 @@ export default function RegisterPage() {
             value={form.regNumber}
             onChange={set("regNumber")}
             error={errors.regNumber}
-            hint="Format: 20YY133XXX (full-time), 20YY134XXX (part-time), 20YY165XXX (Education, regular) or 20YY164XXX (Education, CEP)"
+            hint="Format: 20YY134XXX (regular), 20YY133XXX (CEP), 20YY174XXX (Education, regular) or 20YY173XXX (Education, CEP)"
             className="font-mono tracking-widest"
           />
           <div className="relative">

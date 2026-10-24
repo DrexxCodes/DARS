@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 import { rateLimit } from "@/lib/rate-limit";
-import { courseVisibleToDepartment, courseVisibleToStudent, departmentOf } from "@/lib/admission";
+import { admissionTypeOf, courseVisibleToAdmissionType, courseVisibleToDepartment, courseVisibleToStudent, departmentOf } from "@/lib/admission";
 import { audienceOf, enrollmentRef } from "@/lib/enrollment";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import type { CarryoverEntry, CarryoverStatus } from "@/types/mark";
@@ -31,10 +31,11 @@ export async function GET(req: NextRequest) {
 
     const department = departmentOf(me.reg);
     const coursesSnap = await db.collection("courses").where("active", "==", true).get();
-    // Courses of their own department that aren't for their level. Carry-overs don't cross departments.
+    // Courses of their own department and admission type that aren't for their level. Carry-overs don't cross either.
+    const admissionType = admissionTypeOf(me.reg);
     const others = coursesSnap.docs.filter((d) => {
       const a = audienceOf(d.data());
-      return courseVisibleToDepartment(a.departments, department) && !courseVisibleToStudent(a, me.reg);
+      return courseVisibleToDepartment(a.departments, department) && courseVisibleToAdmissionType(a.admissionTypes, admissionType) && !courseVisibleToStudent(a, me.reg);
     });
 
     const enrolSnaps = others.length ? await db.getAll(...others.map((d) => enrollmentRef(d.id, me.reg))) : [];
@@ -76,6 +77,9 @@ export async function POST(req: NextRequest) {
     const audience = audienceOf(courseDoc.data());
     if (!courseVisibleToDepartment(audience.departments, departmentOf(me.reg))) {
       return NextResponse.json({ error: "This course isn't offered to your department." }, { status: 403 });
+    }
+    if (!courseVisibleToAdmissionType(audience.admissionTypes, admissionTypeOf(me.reg))) {
+      return NextResponse.json({ error: "This course isn't offered to your admission type." }, { status: 403 });
     }
     if (courseVisibleToStudent(audience, me.reg)) {
       return NextResponse.json({ error: "This course is already part of your level." }, { status: 400 });

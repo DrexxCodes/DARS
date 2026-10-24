@@ -1,5 +1,6 @@
 import { format } from "date-fns";
-import type { CourseExportData, ExportSession } from "@/types/admin";
+import { ADMISSION_TYPES, DEPARTMENTS } from "@/constants/academics";
+import type { CourseExportData, ExportSession, ExportStudent } from "@/types/admin";
 
 type RGB = [number, number, number];
 
@@ -67,6 +68,20 @@ function footer(doc: import("jspdf").jsPDF) {
   }
 }
 
+/** Students split by department, in the order of DEPARTMENTS (Political Science first). Empty departments are dropped. */
+function groupByDepartment(students: ExportStudent[]) {
+  return DEPARTMENTS.map((d) => ({ id: d.id, label: d.label, students: students.filter((s) => s.department === d.id) })).filter(
+    (g) => g.students.length > 0
+  );
+}
+
+/** "9 Regular, 3 CEP" for a list of students. */
+const typeSummary = (list: ExportStudent[]) =>
+  ADMISSION_TYPES.map((t) => ({ label: t.label, n: list.filter((s) => s.admissionType === t.id).length }))
+    .filter((x) => x.n > 0)
+    .map((x) => `${x.n} ${x.label}`)
+    .join(", ");
+
 const sessionHead = (s: ExportSession, sameDayCount: number) =>
   sameDayCount > 1 ? `${shortDay(s.date)}\n${clock(s.startTime)}` : shortDay(s.date);
 
@@ -84,16 +99,13 @@ export async function exportCourseAttendancePDF(data: CourseExportData) {
   const perDay = new Map<string, number>();
   sessions.forEach((s) => perDay.set(s.date, (perDay.get(s.date) ?? 0) + 1));
 
-  const totalPresent = students.reduce((n, s) => n + Object.keys(records[s.regNumber] ?? {}).length, 0);
-  const possible = students.length * sessions.length;
   const dates = sessions.map((s) => s.date).filter(Boolean).sort();
-
-  const startY = header(doc, `Course Attendance - ${course.code} · ${course.name}`, [
-    `${sessions.length} class${sessions.length === 1 ? "" : "es"} held${dates.length ? ` (${dayLabel(dates[0])} to ${dayLabel(dates[dates.length - 1])})` : ""} · ${students.length} student${students.length === 1 ? "" : "s"} · overall attendance ${pct(totalPresent, possible)}%`,
-    `Key: P = present · L = present, late · A = absent        Generated: ${format(new Date(), "MMM d yyyy, h:mm a")}`,
-  ]);
+  const held = `${sessions.length} class${sessions.length === 1 ? "" : "es"} held${dates.length ? ` (${dayLabel(dates[0])} to ${dayLabel(dates[dates.length - 1])})` : ""}`;
+  const title = `Course Attendance - ${course.code} · ${course.name}`;
+  const keyLine = `Key: P = present · L = present, late · A = absent        Generated: ${format(new Date(), "MMM d yyyy, h:mm a")}`;
 
   if (sessions.length === 0 || students.length === 0) {
+    const startY = header(doc, title, [held, keyLine]);
     doc.setFontSize(10);
     doc.setTextColor(120, 120, 120);
     doc.text(sessions.length === 0 ? "No classes have been held for this course yet." : "No students to list.", 14, startY + 6);
@@ -103,20 +115,6 @@ export async function exportCourseAttendancePDF(data: CourseExportData) {
   }
 
   const FIXED = 5; // S/N, Reg, Name, Attended, %
-  const head = [["S/N", "Reg No.", "Name", "Attended", "%", ...sessions.map((s) => sessionHead(s, perDay.get(s.date) ?? 1))]];
-  const body = students.map((st, i) => {
-    const rec = records[st.regNumber] ?? {};
-    const attended = sessions.filter((s) => rec[s.id]).length;
-    return [
-      String(i + 1),
-      st.regNumber,
-      st.name,
-      `${attended}/${sessions.length}`,
-      `${pct(attended, sessions.length)}%`,
-      ...sessions.map((s) => (rec[s.id] ? (rec[s.id].late ? "L" : "P") : "A")),
-    ];
-  });
-
   const columnStyles: Record<number, object> = {
     0: { cellWidth: 10, halign: "center" },
     1: { cellWidth: 26 },
@@ -125,34 +123,60 @@ export async function exportCourseAttendancePDF(data: CourseExportData) {
     4: { cellWidth: 13, halign: "center" },
   };
   sessions.forEach((_, i) => (columnStyles[FIXED + i] = { cellWidth: 16, halign: "center" }));
+  const head = [["S/N", "Reg No.", "Name", "Attended", "%", ...sessions.map((s) => sessionHead(s, perDay.get(s.date) ?? 1))]];
 
-  autoTable(doc, {
-    head,
-    body,
-    startY,
-    theme: "grid",
-    margin: { left: 10, right: 10, bottom: 12 },
-    styles: { fontSize: 7.5, cellPadding: 1.8, valign: "middle", lineColor: [226, 232, 240], lineWidth: 0.15, overflow: "ellipsize" },
-    headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold", halign: "center", fontSize: 7 },
-    columnStyles,
-    horizontalPageBreak: true,
-    horizontalPageBreakRepeat: [0, 1, 2, 3, 4],
-    didParseCell(h) {
-      if (h.section !== "body") return;
-      const col = h.column.index;
-      const raw = String(h.cell.raw ?? "");
-      if (col === 2) h.cell.styles.halign = "left";
-      if (col === 4) {
-        h.cell.styles.textColor = pctColour(parseInt(raw, 10) || 0);
-        h.cell.styles.fontStyle = "bold";
-      }
-      if (col >= FIXED) {
-        h.cell.styles.fontStyle = "bold";
-        if (raw === "P") { h.cell.styles.fillColor = GREEN_BG; h.cell.styles.textColor = GREEN_TX; }
-        else if (raw === "L") { h.cell.styles.fillColor = AMBER_BG; h.cell.styles.textColor = AMBER_TX; }
-        else if (raw === "A") { h.cell.styles.fillColor = RED_BG; h.cell.styles.textColor = RED_TX; }
-      }
-    },
+  // One section per department, each on its own page(s), numbered from 1.
+  groupByDepartment(students).forEach((group, gi) => {
+    if (gi > 0) doc.addPage();
+
+    const present = group.students.reduce((n, s) => n + Object.keys(records[s.regNumber] ?? {}).length, 0);
+    const startY = header(doc, title, [
+      `${group.label} · ${group.students.length} student${group.students.length === 1 ? "" : "s"} (${typeSummary(group.students)}) · overall attendance ${pct(present, group.students.length * sessions.length)}%`,
+      held,
+      keyLine,
+    ]);
+
+    const body = group.students.map((st, i) => {
+      const rec = records[st.regNumber] ?? {};
+      const attended = sessions.filter((s) => rec[s.id]).length;
+      return [
+        String(i + 1),
+        st.regNumber,
+        st.name,
+        `${attended}/${sessions.length}`,
+        `${pct(attended, sessions.length)}%`,
+        ...sessions.map((s) => (rec[s.id] ? (rec[s.id].late ? "L" : "P") : "A")),
+      ];
+    });
+
+    autoTable(doc, {
+      head,
+      body,
+      startY,
+      theme: "grid",
+      margin: { left: 10, right: 10, bottom: 12 },
+      styles: { fontSize: 7.5, cellPadding: 1.8, valign: "middle", lineColor: [226, 232, 240], lineWidth: 0.15, overflow: "ellipsize" },
+      headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold", halign: "center", fontSize: 7 },
+      columnStyles,
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: [0, 1, 2, 3, 4],
+      didParseCell(h) {
+        if (h.section !== "body") return;
+        const col = h.column.index;
+        const raw = String(h.cell.raw ?? "");
+        if (col === 2) h.cell.styles.halign = "left";
+        if (col === 4) {
+          h.cell.styles.textColor = pctColour(parseInt(raw, 10) || 0);
+          h.cell.styles.fontStyle = "bold";
+        }
+        if (col >= FIXED) {
+          h.cell.styles.fontStyle = "bold";
+          if (raw === "P") { h.cell.styles.fillColor = GREEN_BG; h.cell.styles.textColor = GREEN_TX; }
+          else if (raw === "L") { h.cell.styles.fillColor = AMBER_BG; h.cell.styles.textColor = AMBER_TX; }
+          else if (raw === "A") { h.cell.styles.fillColor = RED_BG; h.cell.styles.textColor = RED_TX; }
+        }
+      },
+    });
   });
 
   footer(doc);
@@ -171,20 +195,13 @@ export async function exportDayAttendancePDF(data: CourseExportData, date: strin
   const doc = new jsPDF({ orientation: multi ? "landscape" : "portrait", unit: "mm", format: "a4" });
 
   const presentIn = (reg: string) => sessions.filter((s) => records[reg]?.[s.id]).length;
-  const withAny = students.filter((s) => presentIn(s.regNumber) > 0).length;
-  const lateCount = students.reduce((n, s) => n + sessions.filter((x) => records[s.regNumber]?.[x.id]?.late).length, 0);
-
-  const lines = [
-    sessions.map((s) => `${clock(s.startTime)}${s.endTime ? ` - ${clock(s.endTime)}` : ""}${s.locationName ? ` · ${s.locationName}` : ""}`).join("   |   "),
-    multi
-      ? `${sessions.length} classes held this day · ${withAny} of ${students.length} students attended at least one`
-      : `Present: ${withAny} of ${students.length} (${pct(withAny, students.length)}%) · Absent: ${students.length - withAny}${lateCount ? ` · Late: ${lateCount}` : ""}`,
-    `Generated: ${format(new Date(), "MMM d yyyy, h:mm a")}`,
-  ];
-  const startY = header(doc, `Daily Attendance - ${course.code} · ${dayLabel(date)}`, lines);
+  const times = sessions.map((s) => `${clock(s.startTime)}${s.endTime ? ` - ${clock(s.endTime)}` : ""}${s.locationName ? ` · ${s.locationName}` : ""}`).join("   |   ");
+  const generated = `Generated: ${format(new Date(), "MMM d yyyy, h:mm a")}`;
+  const title = `Daily Attendance - ${course.code} · ${dayLabel(date)}`;
   const file = `DARS_${safeFile(course.code)}_attendance_${date}.pdf`;
 
   if (sessions.length === 0 || students.length === 0) {
+    const startY = header(doc, title, [times, generated]);
     doc.setFontSize(10);
     doc.setTextColor(120, 120, 120);
     doc.text(sessions.length === 0 ? "No class was held for this course on that day." : "No students to list.", 14, startY + 6);
@@ -201,26 +218,44 @@ export async function exportDayAttendancePDF(data: CourseExportData, date: strin
   };
 
   const head = [["S/N", "Reg No.", "Name", ...sessions.map((s) => (multi ? `Class ${clock(s.startTime)}` : "Status"))]];
-  const body = students.map((st, i) => [String(i + 1), st.regNumber, st.name, ...sessions.map((s) => cell(st.regNumber, s))]);
 
-  autoTable(doc, {
-    head,
-    body,
-    startY,
-    theme: "grid",
-    margin: { left: 10, right: 10, bottom: 12 },
-    styles: { fontSize: 8, cellPadding: 2, valign: "middle", lineColor: [226, 232, 240], lineWidth: 0.15, overflow: "ellipsize" },
-    headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold" },
-    columnStyles: { 0: { cellWidth: 10, halign: "center" }, 1: { cellWidth: 28 } },
-    didParseCell(h) {
-      if (h.section !== "body" || h.column.index < 3) return;
-      const raw = String(h.cell.raw ?? "");
-      h.cell.styles.halign = "center";
-      h.cell.styles.fontStyle = "bold";
-      if (raw.startsWith("Present")) { h.cell.styles.fillColor = GREEN_BG; h.cell.styles.textColor = GREEN_TX; }
-      else if (raw.startsWith("Late")) { h.cell.styles.fillColor = AMBER_BG; h.cell.styles.textColor = AMBER_TX; }
-      else { h.cell.styles.fillColor = RED_BG; h.cell.styles.textColor = RED_TX; }
-    },
+  // One section per department, each on its own page(s), numbered from 1.
+  groupByDepartment(students).forEach((group, gi) => {
+    if (gi > 0) doc.addPage();
+
+    const list = group.students;
+    const withAny = list.filter((s) => presentIn(s.regNumber) > 0).length;
+    const lateCount = list.reduce((n, s) => n + sessions.filter((x) => records[s.regNumber]?.[x.id]?.late).length, 0);
+    const startY = header(doc, title, [
+      `${group.label} · ${list.length} student${list.length === 1 ? "" : "s"} (${typeSummary(list)})`,
+      times,
+      multi
+        ? `${sessions.length} classes held this day · ${withAny} of ${list.length} students attended at least one`
+        : `Present: ${withAny} of ${list.length} (${pct(withAny, list.length)}%) · Absent: ${list.length - withAny}${lateCount ? ` · Late: ${lateCount}` : ""}`,
+      generated,
+    ]);
+
+    const body = list.map((st, i) => [String(i + 1), st.regNumber, st.name, ...sessions.map((s) => cell(st.regNumber, s))]);
+
+    autoTable(doc, {
+      head,
+      body,
+      startY,
+      theme: "grid",
+      margin: { left: 10, right: 10, bottom: 12 },
+      styles: { fontSize: 8, cellPadding: 2, valign: "middle", lineColor: [226, 232, 240], lineWidth: 0.15, overflow: "ellipsize" },
+      headStyles: { fillColor: BRAND, textColor: 255, fontStyle: "bold" },
+      columnStyles: { 0: { cellWidth: 10, halign: "center" }, 1: { cellWidth: 28 } },
+      didParseCell(h) {
+        if (h.section !== "body" || h.column.index < 3) return;
+        const raw = String(h.cell.raw ?? "");
+        h.cell.styles.halign = "center";
+        h.cell.styles.fontStyle = "bold";
+        if (raw.startsWith("Present")) { h.cell.styles.fillColor = GREEN_BG; h.cell.styles.textColor = GREEN_TX; }
+        else if (raw.startsWith("Late")) { h.cell.styles.fillColor = AMBER_BG; h.cell.styles.textColor = AMBER_TX; }
+        else { h.cell.styles.fillColor = RED_BG; h.cell.styles.textColor = RED_TX; }
+      },
+    });
   });
 
   footer(doc);

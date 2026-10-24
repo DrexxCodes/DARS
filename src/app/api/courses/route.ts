@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
-import { parseDepartments, parseLevels } from "@/lib/admission";
+import { parseAdmissionTypes, parseDepartments, parseLevels } from "@/lib/admission";
 
 interface AdminUser {
   uid: string;
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { name, code, description, levels: rawLevels, departments: rawDepartments } = await req.json();
+    const { name, code, description, levels: rawLevels, departments: rawDepartments, admissionTypes: rawAdmissionTypes } = await req.json();
     if (!name || !code) {
       return NextResponse.json({ error: "Course name and code are required." }, { status: 400 });
     }
@@ -62,6 +62,9 @@ export async function POST(req: NextRequest) {
     // Departments this course is restricted to; empty = open to every department
     const departments = rawDepartments === undefined ? [] : parseDepartments(rawDepartments);
     if (!departments) return NextResponse.json({ error: "Invalid departments." }, { status: 400 });
+    // Admission types (regular / CEP) this course is for; empty = both
+    const admissionTypes = rawAdmissionTypes === undefined ? [] : parseAdmissionTypes(rawAdmissionTypes);
+    if (!admissionTypes) return NextResponse.json({ error: "Invalid admission types." }, { status: 400 });
 
     const now = Date.now();
     const ref = await db.collection("courses").add({
@@ -70,6 +73,7 @@ export async function POST(req: NextRequest) {
       description: description || "",
       levels,
       departments,
+      admissionTypes,
       assignedAdmins: [],
       active: true,
       totalClasses: 0,   // ← denormalized counter
@@ -101,7 +105,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const { courseId, assignedAdmins, active, levels, departments } = await req.json();
+    const { courseId, assignedAdmins, active, levels, departments, admissionTypes } = await req.json();
     const update: Record<string, unknown> = {};
     if (levels !== undefined) {
       const parsed = parseLevels(levels);
@@ -112,6 +116,11 @@ export async function PATCH(req: NextRequest) {
       const parsed = parseDepartments(departments);
       if (!parsed) return NextResponse.json({ error: "Invalid departments." }, { status: 400 });
       update.departments = parsed;
+    }
+    if (admissionTypes !== undefined) {
+      const parsed = parseAdmissionTypes(admissionTypes);
+      if (!parsed) return NextResponse.json({ error: "Invalid admission types." }, { status: 400 });
+      update.admissionTypes = parsed;
     }
     if (assignedAdmins !== undefined) update.assignedAdmins = assignedAdmins;
     if (active !== undefined) update.active = active;

@@ -29,6 +29,10 @@ export interface ExportSession {
 export interface ExportStudent {
   regNumber: string;
   name: string;
+  /** Department id from the reg number code ("pol" or "edu"). */
+  department: string;
+  /** Admission type from the reg number code ("regular" or "cep"). */
+  admissionType: string;
 }
 
 /** A student's attendance record for one session. */

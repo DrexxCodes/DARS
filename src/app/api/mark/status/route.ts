@@ -26,6 +26,7 @@ export async function GET() {
           code: String(c.code ?? ""),
           levels: Array.isArray(c.levels) ? (c.levels as number[]) : [], // empty = every level
           departments: Array.isArray(c.departments) ? (c.departments as string[]) : [], // empty = every department
+          admissionTypes: Array.isArray(c.admissionTypes) ? (c.admissionTypes as string[]) : [], // empty = regular and CEP
         };
       });
       const activeIds = new Set(courses.map((c) => c.id));

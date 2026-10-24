@@ -16,7 +16,18 @@ export const levelLabel = (level: number) => `${level} Level`;
  */
 export const DEPARTMENTS = [
   { id: "pol", label: "Political Science", codes: ["133", "134"] },
-  { id: "edu", label: "Political Science Education", codes: ["165", "164"] },
+  { id: "edu", label: "Political Science Education", codes: ["173", "174"] },
 ] as const;
 export type DepartmentId = (typeof DEPARTMENTS)[number]["id"];
 export const departmentLabel = (id: string) => DEPARTMENTS.find((d) => d.id === id)?.label ?? id;
+
+/**
+ * Admission type, told apart by the same 3-digit code: 134 (Political Science) and 174 (Education) are Regular;
+ * 133 (Political Science) and 173 (Education) are CEP. A course with no admission types set is for both.
+ */
+export const ADMISSION_TYPES = [
+  { id: "regular", label: "Regular", codes: ["134", "174"] },
+  { id: "cep", label: "CEP", codes: ["133", "173"] },
+] as const;
+export type AdmissionTypeId = (typeof ADMISSION_TYPES)[number]["id"];
+export const admissionTypeLabel = (id: string) => ADMISSION_TYPES.find((t) => t.id === id)?.label ?? id;

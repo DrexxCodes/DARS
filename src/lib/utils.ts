@@ -23,8 +23,8 @@ export function formatTime(timestamp: number): string {
   return format(new Date(timestamp), "h:mm a");
 }
 
-// UNIZIK Political Science reg number: 20YY133XXX (full-time), 20YY134XXX (part-time), 20YY165XXX (Political Science Education, regular) or 20YY164XXX (Political Science Education, CEP)
-export const REG_NUMBER_REGEX = /^20\d{2}(133|134|165|164)\d{3}$/;
+// UNIZIK Political Science reg number: 20YY134XXX (regular), 20YY133XXX (CEP), 20YY174XXX (Political Science Education, regular) or 20YY173XXX (Political Science Education, CEP)
+export const REG_NUMBER_REGEX = /^20\d{2}(133|134|173|174)\d{3}$/;
 
 export function validateRegNumber(regNumber: string): boolean {
   return REG_NUMBER_REGEX.test(regNumber.trim().toUpperCase());

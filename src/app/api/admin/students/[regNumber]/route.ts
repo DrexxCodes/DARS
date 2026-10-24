@@ -13,6 +13,7 @@ interface Course {
   assignedAdmins?: string[];
   levels?: number[];
   departments?: string[];
+  admissionTypes?: string[];
 }
 
 export async function GET(

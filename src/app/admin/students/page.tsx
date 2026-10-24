@@ -98,7 +98,7 @@ export default function StudentSearchPage() {
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="e.g. 2023133001"
+              placeholder="e.g. 2023134001"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}

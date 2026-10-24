@@ -34,7 +34,7 @@ export default function DepartmentPicker({ value, onChange, disabled }: Departme
         ))}
       </div>
       <p className="text-xs text-slate-400 dark:text-slate-500 mt-1.5">
-        The department comes from the code in the registration number: 133 / 134 for Political Science, 165 / 164 for Political Science Education.
+        The department comes from the code in the registration number: 133 / 134 for Political Science, 173 / 174 for Political Science Education.
       </p>
     </div>
   );

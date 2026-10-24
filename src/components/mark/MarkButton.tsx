@@ -58,7 +58,7 @@ export default function MarkButton({ courseId, courseName, location, onSuccess, 
     if (isAdmin && useOverride) {
       const normalized = normalizeRegNumber(overrideReg);
       if (!validateRegNumber(normalized)) {
-        setError("Invalid format. Expected e.g. 2023133001 or 2016522005");
+        setError("Invalid format. Expected e.g. 2023134001 or 2023174001");
         return;
       }
       regNumber = normalized;
@@ -192,7 +192,7 @@ export default function MarkButton({ courseId, courseName, location, onSuccess, 
               onChange={(e) => { setOverrideReg(e.target.value); setError(""); }}
               error={error}
               onKeyDown={(e) => e.key === "Enter" && handleMark()}
-              hint="Format: 20YY133XXX, 20YY134XXX, 20YY165XXX or 20YY164XXX"
+              hint="Format: 20YY133XXX, 20YY134XXX, 20YY173XXX or 20YY174XXX"
               autoFocus
               className="font-mono text-center tracking-widest text-lg"
             />

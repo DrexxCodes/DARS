@@ -1,5 +1,34 @@
 # DARS Changelog
 
+## v2.5.1 — Reg number codes corrected
+- **Political Science:** 134 is Regular and 133 is CEP (they were the other way round in v2.5.0).
+- **Education:** the codes are now **173 (CEP) and 174 (Regular)**. 164 and 165 are no longer accepted.
+- `REG_NUMBER_REGEX` (`src/lib/utils.ts`, the single check used by sign-up and every API route) now accepts 133 | 134 | 173 | 174. Department and admission type tables in `src/constants/academics.ts`; hints and examples updated in `register/page.tsx`, `MarkButton.tsx`, `RegNumberForm.tsx`, `DepartmentPicker.tsx`, `AdmissionTypePicker.tsx` and the Student Lookup placeholder.
+- **Existing students with 164 or 165 numbers** now count as invalid: they can't sign in to mark, and they are left out of PDFs. If any are already in Firestore, they need their reg numbers migrated (164 to 173, 165 to 174, if that's the intended mapping).
+
+## v2.5.0 — Exports grouped by department, courses split by Regular / CEP
+
+### Reg number codes (3 digits after the year)
+| Code | Department | Admission type |
+|---|---|---|
+| 134 | Political Science | Regular |
+| 133 | Political Science | CEP |
+| 174 | Political Science Education | Regular |
+| 173 | Political Science Education | CEP |
+
+### Course admission type (Regular / CEP)
+- Courses now have an optional `admissionTypes` list. **Empty or missing = for both**, so every existing course keeps working until a super admin sets it.
+- **`src/constants/academics.ts`**: `ADMISSION_TYPES`. **`src/lib/admission.ts`**: `admissionTypeOf`, `courseVisibleToAdmissionType`, `parseAdmissionTypes`, `isValidRegNumber`; `courseVisibleToStudent` now checks level + department + admission type. **`src/lib/enrollment.ts`**: `audienceOf` reads `admissionTypes`.
+- **`src/app/api/courses/route.ts`**: `POST` and `PATCH` accept and validate `admissionTypes` (super admins only).
+- **Class Management page** (`admin/create/page.tsx`, new `AdmissionTypePicker.tsx`): pick Regular, CEP, or both when creating or editing a course's audience; badges show the current setting.
+- Applies everywhere the audience is used, not just exports: marking attendance (`/api/mark`, admin mark), the student's course list (`/api/mark/status`, `types/mark.ts`), Student Lookup, and carry-over requests, which now also can't cross admission types (`/api/mark/carryover`).
+
+### Exports
+- **`src/app/api/admin/export/route.ts`**: the roster respects the course's admission types, and **students with an invalid reg number are left out of every PDF** (also saves their record reads). Each student now carries `department` and `admissionType` (`types/admin.ts`), sorted Political Science then Education, Regular before CEP, then reg number.
+- **`src/lib/attendance-pdf.ts`**: both PDFs (whole course, one day) now have one section per department, each starting on a new page with its own header, S/N from 1, student count with a Regular/CEP split, and its own attendance figures.
+- Departments with no students for that course are skipped.
+
+
 ## v2.4.0 — Hide admins from attendance exports, overall rate in Student Lookup
 
 ### Admins can be left out of PDF exports
@@ -9,6 +38,9 @@ An admin who is also a student can opt out of the attendance PDFs. While opted o
 - **`src/app/api/admin/export-visibility/route.ts`** (new): `PATCH { exclude, uid? }`. Any admin changes their own setting; **super admins can change it for any existing admin** (an admin's later choice replaces it). Logged to `activityLog` as `set_export_visibility`.
 - **UI**: a checkbox under **Export Attendance** on the Classes page (your own setting, shown only to admins with a reg number), and a per-admin checkbox on **Admin Management** for super admins. New `ExportVisibilityToggle.tsx`, `useExportVisibility.ts`; `UserProfile.excludeFromExports` added in `auth-context.tsx`.
 - Default is unchanged: nobody is hidden until they (or a super admin) choose it. Only affects exports; marking, revoking and the student's own dashboard are untouched.
+
+### Dev fix: stale service worker broke HMR
+- `src/components/pwa/ServiceWorkerRegister.tsx`: in dev it now unregisters any leftover service worker and deletes `dars-*` caches, then reloads once. A worker installed by an earlier production run on the same origin served stale `/_next/static/*` files and caused Turbopack's "module factory is not available" error. Production behavior is unchanged.
 
 ### Student Lookup (scoped admins)
 Verified: a scoped admin can look a student up by **reg number** and sees attendance only for their assigned courses (others show as Restricted). Gaps found and fixed:

@@ -9,15 +9,16 @@ import { toast } from "sonner";
 import { formatTime } from "@/lib/utils";
 import LevelPicker from "@/components/admin/LevelPicker";
 import DepartmentPicker from "@/components/admin/DepartmentPicker";
+import AdmissionTypePicker from "@/components/admin/AdmissionTypePicker";
 import ExportAttendanceCard from "@/components/admin/ExportAttendanceCard";
 import CarryoverRequestsCard from "@/components/admin/CarryoverRequestsCard";
-import { levelLabel, departmentLabel } from "@/constants/academics";
+import { levelLabel, departmentLabel, admissionTypeLabel } from "@/constants/academics";
 import {
   PlayCircle, StopCircle, PauseCircle, PlayIcon,
   Plus, Clock, Users, BookOpen, Activity, MapPin, Trash2, AlertTriangle
 } from "lucide-react";
 
-interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; levels?: number[]; departments?: string[]; }
+interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; levels?: number[]; departments?: string[]; admissionTypes?: string[]; }
 interface GlobalState {
   classActive: boolean; checkinPaused: boolean;
   startTime: number | null; endTime: number | null;
@@ -46,9 +47,10 @@ export default function AdminCreatePage() {
 
   // New course form
   const [showCourseForm, setShowCourseForm] = useState(false);
-  const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "", levels: [] as number[], departments: [] as string[] });
+  const [newCourse, setNewCourse] = useState({ name: "", code: "", description: "", levels: [] as number[], departments: [] as string[], admissionTypes: [] as string[] });
   const [editLevels, setEditLevels] = useState<number[] | null>(null); // non-null while editing the selected course's levels + departments
   const [editDepartments, setEditDepartments] = useState<string[]>([]);
+  const [editAdmissionTypes, setEditAdmissionTypes] = useState<string[]>([]);
   const [savingLevels, setSavingLevels] = useState(false);
   const [creatingCourse, setCreatingCourse] = useState(false);
 
@@ -208,7 +210,7 @@ export default function AdminCreatePage() {
       const data = await res.json();
       if (!res.ok) { toast.error(data.error); return; }
       toast.success(`Course ${newCourse.code} created!`);
-      setNewCourse({ name: "", code: "", description: "", levels: [], departments: [] });
+      setNewCourse({ name: "", code: "", description: "", levels: [], departments: [], admissionTypes: [] });
       setShowCourseForm(false);
       fetchCourses();
     } catch { toast.error("Failed to create course."); } finally { setCreatingCourse(false); }
@@ -222,7 +224,7 @@ export default function AdminCreatePage() {
       const res = await fetch("/api/courses", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ courseId: selectedCourse, levels: editLevels, departments: editDepartments }),
+        body: JSON.stringify({ courseId: selectedCourse, levels: editLevels, departments: editDepartments, admissionTypes: editAdmissionTypes }),
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Failed to update course."); return; }
@@ -272,6 +274,10 @@ export default function AdminCreatePage() {
             <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Restrict to departments</p>
             <DepartmentPicker value={newCourse.departments} onChange={(departments) => setNewCourse((p) => ({ ...p, departments }))} />
           </div>
+          <div>
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Admission type</p>
+            <AdmissionTypePicker value={newCourse.admissionTypes} onChange={(admissionTypes) => setNewCourse((p) => ({ ...p, admissionTypes }))} />
+          </div>
           <div className="flex gap-2 justify-end">
             <Button variant="outline" size="sm" onClick={() => setShowCourseForm(false)}>Cancel</Button>
             <Button size="sm" loading={creatingCourse} onClick={handleCreateCourse}>Create Course</Button>
@@ -300,9 +306,13 @@ export default function AdminCreatePage() {
                   {selectedCourseData?.departments?.length
                     ? selectedCourseData.departments.map((d) => <Badge key={d} variant="orange">{departmentLabel(d)}</Badge>)
                     : <Badge variant="slate">All departments</Badge>}
+                  <span className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-2">Admission:</span>
+                  {selectedCourseData?.admissionTypes?.length
+                    ? selectedCourseData.admissionTypes.map((t) => <Badge key={t} variant="green">{admissionTypeLabel(t)}</Badge>)
+                    : <Badge variant="slate">Regular &amp; CEP</Badge>}
                 </div>
                 {profile.scope === "super" && editLevels === null && (
-                  <Button size="sm" variant="outline" onClick={() => { setEditLevels(selectedCourseData?.levels ?? []); setEditDepartments(selectedCourseData?.departments ?? []); }}>
+                  <Button size="sm" variant="outline" onClick={() => { setEditLevels(selectedCourseData?.levels ?? []); setEditDepartments(selectedCourseData?.departments ?? []); setEditAdmissionTypes(selectedCourseData?.admissionTypes ?? []); }}>
                     Edit Audience
                   </Button>
                 )}
@@ -311,6 +321,7 @@ export default function AdminCreatePage() {
                 <div className="space-y-3 border-t border-slate-100 dark:border-slate-700 pt-3">
                   <LevelPicker value={editLevels} onChange={setEditLevels} disabled={savingLevels} />
                   <DepartmentPicker value={editDepartments} onChange={setEditDepartments} disabled={savingLevels} />
+                  <AdmissionTypePicker value={editAdmissionTypes} onChange={setEditAdmissionTypes} disabled={savingLevels} />
                   <div className="flex justify-end gap-2">
                     <Button size="sm" variant="outline" onClick={() => setEditLevels(null)}>Cancel</Button>
                     <Button size="sm" loading={savingLevels} onClick={handleSaveLevels}>Save</Button>

@@ -20,8 +20,8 @@ const loadLocation = (locationId: string) =>
     return snap.exists ? (snap.data() as LocationTag) : null;
   });
 
-// Which levels and departments a course is assigned to. Edited rarely, so a short cache keeps this off the hot path.
-const courseAudienceCache = ttlCache<{ levels: number[]; departments: string[] }>(30_000);
+// Which levels, departments and admission types a course is assigned to. Edited rarely, so a short cache keeps this off the hot path.
+const courseAudienceCache = ttlCache<ReturnType<typeof audienceOf>>(30_000);
 const loadCourseAudience = (courseId: string) =>
   courseAudienceCache.get(courseId, async () => {
     const snap = await db.collection("courses").doc(courseId).get();

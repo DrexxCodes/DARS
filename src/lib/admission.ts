@@ -1,4 +1,5 @@
-import { ACADEMIC_SESSION_START_MONTH, COURSE_DURATION_YEARS, DEPARTMENTS, LEVELS, type DepartmentId } from "@/constants/academics";
+import { ACADEMIC_SESSION_START_MONTH, ADMISSION_TYPES, COURSE_DURATION_YEARS, DEPARTMENTS, LEVELS, type AdmissionTypeId, type DepartmentId } from "@/constants/academics";
+import { REG_NUMBER_REGEX } from "@/lib/utils";
 
 /**
  * Same logic NPS uses (src/lib/admission.ts): the admission year is the first four digits of the number
@@ -70,13 +71,48 @@ export function parseDepartments(input: unknown): DepartmentId[] | null {
   return out;
 }
 
+/** The student's admission type (regular or CEP) from the 3-digit code in their reg number, or null if unrecognised. */
+export function admissionTypeOf(regNumber: string | null | undefined): AdmissionTypeId | null {
+  if (!regNumber || !/^\d{10}$/.test(regNumber)) return null;
+  const code = regNumber.slice(4, 7);
+  return ADMISSION_TYPES.find((t) => (t.codes as readonly string[]).includes(code))?.id ?? null;
+}
+
+/** A course with no admission types set is for both regular and CEP. A null type (unrecognised number) sees everything. */
+export function courseVisibleToAdmissionType(types: readonly string[] | null | undefined, type: string | null): boolean {
+  if (!types || types.length === 0 || type === null) return true;
+  return types.includes(type);
+}
+
+/** Validates an admission types payload. Returns a de-duplicated list, or null if invalid. */
+export function parseAdmissionTypes(input: unknown): AdmissionTypeId[] | null {
+  if (!Array.isArray(input)) return null;
+  const allowed = new Set<string>(ADMISSION_TYPES.map((t) => t.id));
+  const out: AdmissionTypeId[] = [];
+  for (const v of input) {
+    if (typeof v !== "string" || !allowed.has(v)) return null;
+    if (!out.includes(v as AdmissionTypeId)) out.push(v as AdmissionTypeId);
+  }
+  return out;
+}
+
+/** True for a well-formed reg number whose department and admission type are both recognised. */
+export function isValidRegNumber(regNumber: string | null | undefined): boolean {
+  return !!regNumber && REG_NUMBER_REGEX.test(regNumber) && departmentOf(regNumber) !== null && admissionTypeOf(regNumber) !== null;
+}
+
 /** The shape of a course's audience settings. Empty/missing = open to all. */
 export interface CourseAudience {
   levels?: readonly number[] | null;
   departments?: readonly string[] | null;
+  admissionTypes?: readonly string[] | null;
 }
 
-/** True when the course is for this student's level AND department. */
+/** True when the course is for this student's level, department AND admission type (regular / CEP). */
 export function courseVisibleToStudent(course: CourseAudience, regNumber: string | null | undefined, now: Date = new Date()): boolean {
-  return courseVisibleToLevel(course.levels, levelOf(regNumber, now)) && courseVisibleToDepartment(course.departments, departmentOf(regNumber));
+  return (
+    courseVisibleToLevel(course.levels, levelOf(regNumber, now)) &&
+    courseVisibleToDepartment(course.departments, departmentOf(regNumber)) &&
+    courseVisibleToAdmissionType(course.admissionTypes, admissionTypeOf(regNumber))
+  );
 }
