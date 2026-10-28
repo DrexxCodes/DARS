@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
+import { RADIUS_LIMITS } from "@/constants/location";
+
+const radiusError = `Check-in range must be between ${RADIUS_LIMITS.MIN_M} and ${RADIUS_LIMITS.MAX_M} meters.`;
+const radiusOk = (r: number) => Number.isFinite(r) && r >= RADIUS_LIMITS.MIN_M && r <= RADIUS_LIMITS.MAX_M;
 
 interface SuperAdmin {
   uid: string;
@@ -62,9 +66,7 @@ export async function POST(req: NextRequest) {
     }
 
     const radius = Number(radiusMeters);
-    if (!radius || radius <= 0) {
-      return NextResponse.json({ error: "A valid radius (in meters) is required." }, { status: 400 });
-    }
+    if (!radiusOk(radius)) return NextResponse.json({ error: radiusError }, { status: 400 });
 
     const now = Date.now();
     const colRef = locationsCollection();
@@ -141,10 +143,8 @@ export async function PATCH(req: NextRequest) {
     if (name) update.name = name;
     if (radiusMeters !== undefined) {
       const radius = Number(radiusMeters);
-      if (!radius || radius <= 0) {
-        return NextResponse.json({ error: "A valid radius (in meters) is required." }, { status: 400 });
-      }
-      update.radiusMeters = radius;
+      if (!radiusOk(radius)) return NextResponse.json({ error: radiusError }, { status: 400 });
+      update.radiusMeters = Math.round(radius);
     }
     if (Object.keys(update).length) await ref.update(update);
 

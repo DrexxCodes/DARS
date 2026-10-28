@@ -8,6 +8,7 @@ import { Card, Button, Input } from "@/components/ui";
 import { toast } from "sonner";
 import Link from "next/link";
 import { CheckSquare, Eye, EyeOff } from "lucide-react";
+import SsoInline from "@/components/sso/SsoInline";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -71,6 +72,8 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Welcome back</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Sign in to your DARS account</p>
         </div>
+
+        <SsoInline />
 
         <Card className="p-6 space-y-4">
           <Input

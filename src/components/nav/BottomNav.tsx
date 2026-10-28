@@ -65,7 +65,7 @@ export default function BottomNav() {
           );
         })}
         {overflow && (
-          <button onClick={() => setMoreOpen(true)} className={tab(moreActive || moreOpen)} aria-label="More">
+          <button onClick={() => setMoreOpen(true)} data-gate-exempt className={tab(moreActive || moreOpen)} aria-label="More">
             <span className={pill(moreActive || moreOpen)}>
               <Ellipsis className="w-5 h-5" />
             </span>
@@ -121,6 +121,7 @@ export default function BottomNav() {
                   setMoreOpen(false);
                   logout();
                 }}
+                data-gate-exempt
                 className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40"
               >
                 <LogOut className="w-4 h-4" /> Logout

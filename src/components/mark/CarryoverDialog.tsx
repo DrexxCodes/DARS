@@ -6,6 +6,8 @@ import { GraduationCap } from "lucide-react";
 import { Badge, Button, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { levelLabel } from "@/constants/academics";
+import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
+import { openBirthdaySheet } from "@/lib/birthday-events";
 import type { CarryoverEntry } from "@/types/mark";
 
 interface Props {
@@ -27,7 +29,8 @@ export default function CarryoverDialog({ open, onClose, entries, onChanged }: P
         body: JSON.stringify({ courseId }),
       });
       const data = await res.json();
-      if (!res.ok) toast.error(data.error || "Couldn't submit your application.");
+      if (res.status === 403 && data.code === BIRTHDAY_REQUIRED_CODE) openBirthdaySheet();
+      else if (!res.ok) toast.error(data.error || "Couldn't submit your application.");
       else toast.success("Application sent. An admin for the course needs to approve it.");
       onChanged();
     } catch {

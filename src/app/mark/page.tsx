@@ -9,6 +9,7 @@ import ClassStatusBanner from "@/components/mark/ClassStatusBanner";
 import SuccessCard from "@/components/mark/SuccessCard";
 import LocationGate from "@/components/mark/LocationGate";
 import LocationStatus from "@/components/mark/LocationStatus";
+import WeakSignalBanner from "@/components/mark/WeakSignalBanner";
 import { useLocationFix } from "@/hooks/useLocationFix";
 import { useMarkStatus } from "@/hooks/useMarkStatus";
 import { useCarryovers } from "@/hooks/useCarryovers";
@@ -102,6 +103,7 @@ export default function MarkPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-4 py-10">
+      <WeakSignalBanner show={location.status === "weak" && !success} accuracy={location.accuracy} />
       <div className="w-full max-w-md space-y-4">
         {/* Header */}
         <div className="text-center mb-6">

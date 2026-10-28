@@ -4,6 +4,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { admissionTypeOf, courseVisibleToAdmissionType, courseVisibleToDepartment, courseVisibleToStudent, departmentOf } from "@/lib/admission";
 import { audienceOf, enrollmentRef } from "@/lib/enrollment";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
+import { hasBirthday } from "@/lib/birthday";
+import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
 import type { CarryoverEntry, CarryoverStatus } from "@/types/mark";
 
 async function getStudentCaller(req: NextRequest) {
@@ -20,7 +22,7 @@ async function getStudentCaller(req: NextRequest) {
   if (!userDoc.exists || !reg || !REG_NUMBER_REGEX.test(reg)) {
     return { error: NextResponse.json({ error: "Your account has no registration number on file." }, { status: 400 }) };
   }
-  return { uid, reg, name: String(userDoc.data()?.name ?? "") };
+  return { uid, reg, name: String(userDoc.data()?.name ?? ""), birthday: hasBirthday(userDoc.data()) };
 }
 
 // GET — every active course outside the caller's level, with their carry-over status for each
@@ -61,6 +63,9 @@ export async function POST(req: NextRequest) {
   try {
     const me = await getStudentCaller(req);
     if ("error" in me) return me.error;
+    if (!me.birthday) {
+      return NextResponse.json({ error: "Add your birthday to continue.", code: BIRTHDAY_REQUIRED_CODE }, { status: 403 });
+    }
     if (!rateLimit(`carryover:${me.uid}`, 10, 60_000).allowed) {
       return NextResponse.json({ error: "Too many attempts. Please wait a moment." }, { status: 429 });
     }

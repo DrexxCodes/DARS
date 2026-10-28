@@ -1,5 +1,35 @@
 # DARS Changelog
 
+## v2.6.1 — Weak-signal banner, clearer weak-fix rejection, editable tag range
+
+### Added
+- **Weak-signal banner** on the Mark page: while the GPS reading is still too rough ("Improving signal"), a top banner says "DARS is trying to boost accuracy, you may still try to mark". Marking is never blocked client-side.
+- **Edit a tag's check-in range** (Admin > Location Tags > **Range**, super admins). Range is limited to 20-2000 m (`RADIUS_LIMITS`), enforced on create and edit. Applies to every class using the tag, including one running now, within about a minute (the mark route caches tags for 60 s).
+
+### Changed
+- When a weak reading is rejected, `/api/mark` now says why: the signal's ±m versus that class's range ("Your location is only accurate to ±369 m, which this class's 200 m range can't cover yet..."), and returns `accuracy` and `radiusMeters` with `LOW_ACCURACY`. The acceptance rule itself is unchanged: ≤150 m is fine if inside the range; 150-500 m only when the whole uncertainty circle (distance + accuracy) fits inside the tag's range.
+
+## v2.6.0 — Birthday on file, registration-number prompt, single sign-in with NPS
+
+### Added
+- **Birthday prompt.** When a signed-in student opens the app, the server-confirmed profile is checked (no extra request: it rides on the existing profile fetch). If no birthday is on file, a sheet glides up: "Just one small thing...", **Day / Month / Year** pickers (day list follows month and year, leap days supported) and "For internal records only". Saved through `POST /api/profile/birthday` to `users/{uid}.dateOfBirth` **and** the `DOB/{MM}/days/{DD}/students/{uid}` index, so the NPS birthday cron wishes DARS students too. Write-once: an existing birthday (DARS or NPS) is never overwritten from here. Same 14-80 age window as NPS.
+- **Attendance is blocked until it's filled in.** `POST /api/mark` (self-marks) and `POST /api/mark/carryover` answer `403 BIRTHDAY_REQUIRED`; the client turns that into the sheet. The check reuses the user document the route already loads (no extra read). Admins marking for another student are not affected.
+- **Any action re-triggers the sheet** until it's done (`GateInterceptor`): taps on buttons/links/inputs reopen it. Sign out, theme toggle and the mobile "More" opener are exempt (`data-gate-exempt`). Only students with a registration number are asked; admins without one are not.
+- **Registration-number sheet** for accounts that arrive from NPS without one (`POST /api/profile/reg-number`, creates `students/{reg}`; must agree with the Regular/CEP type chosen in NPS).
+- **Single sign-in with NPS** (`src/lib/sso/*`, `/api/auth/sso`, `/api/auth/sso/session`). Signing in here records an HMAC-signed httpOnly cookie plus a readable hint cookie. Visiting while signed out with a live NPS session shows "Welcome back, {name} - you're already signed in to NPS. Continue as {name}?". One tap signs in through a Firebase custom token. Off unless `SSO_SECRET` is set.
+
+### Fixed
+- SSO sync no longer trusts the hint cookie alone (a stale one from before `SSO_COOKIE_DOMAIN` was set could stop the shared cookie ever being written). It now syncs once per tab session and reads every copy of the hint cookie.
+
+### Changed
+- Sign-in and register pages show a fixed inline block ("You're signed in to NPS as {name}" + **Continue with NPS** + "or sign in with your email") whenever the other app has a live session, even after signing out. Other pages keep the floating card.
+- `GET /api/users/[uid]` now returns a whitelisted profile plus `birthdayProvided` (yes/no). Before, it returned the whole shared `users` document, which now includes NPS bank details, phone and emergency contacts, to any DARS admin.
+- `AuthProvider` exposes `profileSynced`, `patchProfile`, `loginWithSso`; logout clears the SSO cookie.
+- New `GlideSheet` UI primitive, reused by both sheets.
+
+### Setup
+- Add `SSO_SECRET` (same 32+ char value in DARS and NPS) and, in production, `SSO_COOKIE_DOMAIN` (e.g. `.yourschool.edu.ng`). The apps must be on subdomains of one domain you control; two `*.vercel.app` hosts cannot share cookies.
+- No new packages.
 ## v2.5.1 — Reg number codes corrected
 - **Political Science:** 134 is Regular and 133 is CEP (they were the other way round in v2.5.0).
 - **Education:** the codes are now **173 (CEP) and 174 (Regular)**. 164 and 165 are no longer accepted.

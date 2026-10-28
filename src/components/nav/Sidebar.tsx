@@ -121,6 +121,7 @@ export default function Sidebar() {
       <div className="px-3 py-3 space-y-1 border-t border-slate-100 dark:border-slate-800">
         <button
           onClick={() => setTheme(dark ? "light" : "dark")}
+          data-gate-exempt
           title={collapsed ? "Toggle theme" : undefined}
           className={cn(rowBase, rowLayout, "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800")}
         >
@@ -131,6 +132,7 @@ export default function Sidebar() {
         {isAdmin && (
           <button
             onClick={logout}
+            data-gate-exempt
             title={collapsed ? "Logout" : undefined}
             className={cn(rowBase, rowLayout, "text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950")}
           >

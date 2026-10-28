@@ -9,6 +9,9 @@ export const LOCATION_LIMITS = {
   HARD_MAX_ACCURACY_M: 500,
 } as const;
 
+/** Check-in range an admin may give a location tag, in meters. */
+export const RADIUS_LIMITS = { MIN_M: 20, MAX_M: 2000 } as const;
+
 export const GEO = {
   /** A reading this precise is used immediately. */
   GOOD_ACCURACY_M: 50,

@@ -7,9 +7,10 @@ import { Card, Button, Input, Badge, Skeleton, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getBestPosition } from "@/lib/geolocation-client";
 import { accuracyTier, ACCURACY_GOOD_M, ACCURACY_POOR_M } from "@/lib/location-accuracy";
+import { RADIUS_LIMITS } from "@/constants/location";
 import { toast } from "sonner";
 import {
-  MapPin, Plus, Star, Trash2, Tag as TagIcon, Crosshair, AlertTriangle,
+  MapPin, Plus, Star, Trash2, Tag as TagIcon, Crosshair, AlertTriangle, Ruler,
 } from "lucide-react";
 
 interface LocationTag {
@@ -40,6 +41,11 @@ export default function TagsPage() {
   const [radius, setRadius] = useState("200");
   const [makePrimary, setMakePrimary] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Edit-range dialog
+  const [editing, setEditing] = useState<LocationTag | null>(null);
+  const [editRadius, setEditRadius] = useState("");
+  const [savingRadius, setSavingRadius] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
@@ -125,6 +131,33 @@ export default function TagsPage() {
       toast.error("Failed to create tag.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveRadius = async () => {
+    if (!editing) return;
+    const r = Number(editRadius);
+    if (!Number.isFinite(r) || r < RADIUS_LIMITS.MIN_M || r > RADIUS_LIMITS.MAX_M) {
+      toast.error(`Range must be between ${RADIUS_LIMITS.MIN_M} and ${RADIUS_LIMITS.MAX_M} meters.`);
+      return;
+    }
+    setSavingRadius(true);
+    try {
+      const token = await getToken();
+      const res = await fetch("/api/admin/locations", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ id: editing.id, radiusMeters: r }),
+      });
+      const data = await res.json();
+      if (!res.ok) { toast.error(data.error || "Failed to update range."); return; }
+      toast.success(`"${editing.name}" range is now ${Math.round(r)} m.`);
+      setEditing(null);
+      fetchLocations();
+    } catch {
+      toast.error("Failed to update range.");
+    } finally {
+      setSavingRadius(false);
     }
   };
 
@@ -220,6 +253,12 @@ export default function TagsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    size="sm" variant="outline" icon={<Ruler className="w-3.5 h-3.5" />}
+                    onClick={() => { setEditing(loc); setEditRadius(String(loc.radiusMeters)); }}
+                  >
+                    Range
+                  </Button>
                   {!loc.isPrimary && (
                     <Button
                       size="sm" variant="outline" icon={<Star className="w-3.5 h-3.5" />}
@@ -243,6 +282,36 @@ export default function TagsPage() {
           </div>
         )}
       </Card>
+
+      {/* Edit check-in range */}
+      <Dialog
+        open={!!editing}
+        onClose={() => !savingRadius && setEditing(null)}
+        title={editing ? `Check-in range · ${editing.name}` : "Check-in range"}
+        icon={<Ruler className="w-5 h-5" />}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Check-in Range (meters)"
+            type="number"
+            inputMode="numeric"
+            min={RADIUS_LIMITS.MIN_M}
+            max={RADIUS_LIMITS.MAX_M}
+            value={editRadius}
+            onChange={(e) => setEditRadius(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleSaveRadius()}
+            hint={`${RADIUS_LIMITS.MIN_M}-${RADIUS_LIMITS.MAX_M} m. Students with a weak GPS signal can only mark when this range covers their whole uncertainty circle, so a larger range helps them but lets people mark from farther away.`}
+            autoFocus
+          />
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Applies to every class using this tag, including one running now. It takes effect within about a minute.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setEditing(null)} disabled={savingRadius}>Cancel</Button>
+            <Button className="flex-1" loading={savingRadius} onClick={handleSaveRadius}>Save Range</Button>
+          </div>
+        </div>
+      </Dialog>
 
       {/* Capturing location dialog */}
       <Dialog
@@ -341,7 +410,7 @@ export default function TagsPage() {
               placeholder="200"
               value={radius}
               onChange={(e) => setRadius(e.target.value)}
-              hint="Students must be within this distance to mark attendance"
+              hint={`Students must be within this distance to mark attendance (${RADIUS_LIMITS.MIN_M}-${RADIUS_LIMITS.MAX_M} m)`}
             />
 
             <label className="flex items-center gap-2.5 cursor-pointer group">

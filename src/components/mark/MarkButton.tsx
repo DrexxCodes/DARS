@@ -8,6 +8,8 @@ import { clientAuth } from "@/lib/firebase-client";
 import type { LocationApi, GeoErrorKind } from "@/hooks/useLocationFix";
 import { getDeviceSignals } from "@/lib/device-fingerprint";
 import { haptic } from "@/lib/haptics";
+import { openBirthdaySheet } from "@/lib/birthday-events";
+import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
 import { CheckCircle2, UserCog } from "lucide-react";
 
 interface MarkButtonProps {
@@ -137,6 +139,12 @@ export default function MarkButton({ courseId, courseName, location, onSuccess, 
 
         if (res.status === 404 && data.code === "NOT_FOUND") {
           onNotFound();
+          return;
+        }
+
+        // No birthday on file: ask for it instead of showing an error. Marking resumes after they save it.
+        if (res.status === 403 && data.code === BIRTHDAY_REQUIRED_CODE) {
+          openBirthdaySheet();
           return;
         }
 

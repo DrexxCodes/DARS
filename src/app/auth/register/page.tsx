@@ -8,6 +8,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { CheckSquare, Eye, EyeOff } from "lucide-react";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
+import SsoInline from "@/components/sso/SsoInline";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -81,6 +82,8 @@ export default function RegisterPage() {
             Register for DARS attendance tracking
           </p>
         </div>
+
+        <SsoInline />
 
         <Card className="p-6 space-y-4">
           <Input

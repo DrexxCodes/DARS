@@ -21,7 +21,7 @@ export default function MobileHeader() {
         <div className="flex items-center gap-1">
           <ThemeToggle className="text-white/90 hover:bg-white/15" />
           {isAdmin && (
-            <button onClick={logout} aria-label="Logout" className="p-2 rounded-lg text-white/90 hover:bg-white/15 transition-colors">
+            <button onClick={logout} aria-label="Logout" data-gate-exempt className="p-2 rounded-lg text-white/90 hover:bg-white/15 transition-colors">
               <LogOut className="w-5 h-5" />
             </button>
           )}

@@ -14,6 +14,8 @@ import ServiceWorkerRegister from "@/components/pwa/ServiceWorkerRegister";
 import ViewportLock from "@/components/pwa/ViewportLock";
 import { Toaster } from "sonner";
 import PageTransition from "@/components/ui/PageTransition";
+import ProfileGate from "@/components/gate/ProfileGate";
+import SsoPrompt from "@/components/sso/SsoPrompt";
 
 // Keeps toasts below the notch / Dynamic Island / status bar on iPhones.
 const TOAST_TOP_OFFSET = "calc(env(safe-area-inset-top, 0px) + 12px)";
@@ -55,6 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${inter.variable} font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white min-h-screen flex flex-col`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <AuthProvider>
+            <ProfileGate>
             <StatusBarFill />
             <div className="flex flex-1">
               <Sidebar />
@@ -71,6 +74,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <InstallPrompt />
             <OpenInAppHint />
             <ServiceWorkerRegister />
+            <SsoPrompt />
+            </ProfileGate>
             <Toaster
               position="top-center"
               offset={{ top: TOAST_TOP_OFFSET }}

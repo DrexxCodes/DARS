@@ -5,6 +5,8 @@ import { rateLimit } from "@/lib/rate-limit";
 import { REG_NUMBER_REGEX, isClassExpired, isLateAttendance } from "@/lib/utils";
 import { distanceInMeters } from "@/lib/geo";
 import { courseVisibleToStudent } from "@/lib/admission";
+import { hasBirthday } from "@/lib/birthday";
+import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
 import { audienceOf, enrollmentRef, NOT_ENROLLED_MESSAGE } from "@/lib/enrollment";
 import { ttlCache } from "@/lib/ttl-cache";
 import { LOCATION_LIMITS } from "@/constants/location";
@@ -77,6 +79,10 @@ export async function POST(req: NextRequest) {
       normalized = String(targetRegNumber).trim().toUpperCase();
     } else {
       if (!caller.regNumber) return NextResponse.json({ error: "Your account has no registration number on file." }, { status: 400 });
+      // Self-marks need a birthday on file (the caller's document is already in hand, so this costs no extra read).
+      if (!hasBirthday(caller)) {
+        return NextResponse.json({ error: "Add your birthday to continue marking attendance.", code: BIRTHDAY_REQUIRED_CODE }, { status: 403 });
+      }
       normalized = caller.regNumber;
     }
 
@@ -170,7 +176,19 @@ export async function POST(req: NextRequest) {
     // (the student is provably in range). Otherwise it's too imprecise to trust.
     const preciseEnough = accuracy <= LOCATION_LIMITS.MAX_ACCURACY_M;
     const provablyInside = distance + accuracy <= location.radiusMeters;
-    if (!preciseEnough && !provablyInside) return lowAccuracyResponse();
+    if (!preciseEnough && !provablyInside) {
+      // A weak fix is only trusted when this class's range covers the whole uncertainty circle. Say exactly why it doesn't.
+      const acc = Math.round(accuracy);
+      return NextResponse.json(
+        {
+          error: `Your location is only accurate to ±${acc} m, which this class's ${location.radiusMeters} m range can't cover yet, so DARS can't confirm you're inside. Wait a few seconds for the signal to improve (near a window helps) and tap again.`,
+          code: "LOW_ACCURACY",
+          accuracy: acc,
+          radiusMeters: location.radiusMeters,
+        },
+        { status: 400 }
+      );
+    }
     if (distance > location.radiusMeters) {
       return NextResponse.json(
         { error: `You must be at ${location.name} to mark attendance.`, code: "OUT_OF_RANGE" },

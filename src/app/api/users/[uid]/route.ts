@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
+import { toClientProfile } from "@/lib/profile-shape";
 
 async function getCaller(req: NextRequest) {
   const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -31,7 +32,8 @@ export async function GET(
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ user: { uid, ...userDoc.data() } });
+    // Whitelisted: users/{uid} is shared with NPS and also holds bank details, phone, date of birth, etc.
+    return NextResponse.json({ user: toClientProfile(uid, userDoc.data()!) });
   } catch (error) {
     console.error("Get user error:", error);
     return NextResponse.json({ error: "Failed to fetch user" }, { status: 500 });
