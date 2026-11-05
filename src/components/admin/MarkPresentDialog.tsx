@@ -124,7 +124,7 @@ export default function MarkPresentDialog({ open, onClose, onDone, student, cour
 
         {!loading && sessions !== null && !eligible && (
           <p className="text-sm rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 p-3">
-            {student.name} isn&apos;t in this course&apos;s level and has no approved carry-over, so they can&apos;t be marked present. They can apply for it from the Mark page, then you can approve it on the Classes page.
+            {student.name} isn&apos;t enrolled in this course (it&apos;s not on their level and they have no approved Added Course, or they delisted it), so they can&apos;t be marked present. If it&apos;s an Added Course, they can add it from the Mark page and you can approve it on the Classes page.
           </p>
         )}
 

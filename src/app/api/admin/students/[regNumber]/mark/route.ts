@@ -26,13 +26,13 @@ async function validate(req: NextRequest, ctx: Ctx, courseId: unknown) {
 
   const courseDoc = await db.collection("courses").doc(course.id).get();
   const audience = audienceOf(courseDoc.data());
-  // Only students the course is for (their level, or an approved carry-over) can be marked
+  // Only students who take the course (their level or an approved Added Course, and not delisted) can be marked
   const eligible = await isEligibleForCourse(course.id, audience, reg);
 
   return { admin, reg, student: studentDoc.data()!, course, eligible };
 }
 
-const NOT_ELIGIBLE = "This student isn't in this course's level and has no approved carry-over.";
+const NOT_ELIGIBLE = "This student isn't enrolled in this course (not on their level, no approved Added Course, or they delisted it).";
 
 // GET ?courseId= — the course's classes (newest first), flagged where the student is already present
 export async function GET(req: NextRequest, ctx: Ctx) {

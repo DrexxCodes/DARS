@@ -3,55 +3,29 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { Card, Badge, Skeleton } from "@/components/ui";
+import { Card, Skeleton } from "@/components/ui";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell
 } from "recharts";
-import { clientAuth } from "@/lib/firebase-client";
 import { getAttendanceStatus } from "@/lib/utils";
 import { BookOpen, TrendingUp, CheckCircle2, XCircle } from "lucide-react";
-
-interface CourseAttendance {
-  courseId: string;
-  courseName: string;
-  courseCode: string;
-  attended: number;
-  total: number;
-  percentage: number;
-}
+import { useStudentAttendance } from "@/hooks/useStudentAttendance";
+import StatCard from "@/components/dashboard/StatCard";
+import ActiveClassBanner from "@/components/dashboard/ActiveClassBanner";
+import CourseBreakdownRow from "@/components/dashboard/CourseBreakdownRow";
+import DelistSheet from "@/components/course/DelistSheet";
+import type { CourseAttendance } from "@/types/attendance";
 
 export default function DashboardPage() {
   const { profile, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [data, setData] = useState<CourseAttendance[]>([]);
-  const [studentName, setStudentName] = useState("");
-  const [loading, setLoading] = useState(true);
+  const { courses: data, studentName, loading, refresh } = useStudentAttendance(profile?.regNumber, profile?.name ?? "");
+  const [delisting, setDelisting] = useState<CourseAttendance | null>(null);
 
   useEffect(() => {
     if (!authLoading && !profile) router.push("/auth/login");
   }, [authLoading, profile, router]);
-
-  useEffect(() => {
-    if (!profile) return;
-    const fetch_ = async () => {
-      try {
-        const token = await clientAuth.currentUser?.getIdToken();
-        const res = await fetch(
-          `/api/admin/students/${profile.regNumber}`,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        const json = await res.json();
-        setData(json.courses || []);
-        setStudentName(json.student?.name || profile.name);
-      } catch {
-        // silent
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetch_();
-  }, [profile]);
 
   if (authLoading || !profile) return null;
 
@@ -71,8 +45,10 @@ export default function DashboardPage() {
     attended: c.attended,
     missed: c.total - c.attended,
     percentage: c.percentage,
+    pending: !!c.pendingClass,
     fill: getAttendanceStatus(c.percentage, c.total).hex,
   }));
+  const pendingCourses = data.filter((c) => c.pendingClass);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 w-full space-y-6">
@@ -90,6 +66,8 @@ export default function DashboardPage() {
           )}
         </p>
       </div>
+
+      <ActiveClassBanner pending={pendingCourses} />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -138,6 +116,7 @@ export default function DashboardPage() {
                       <p className="text-brand-600 dark:text-brand-400">Attended: {d.attended}</p>
                       <p className="text-red-500">Missed: {d.missed}</p>
                       <p className="text-slate-500">Rate: {d.percentage}%</p>
+                      {d.pending && <p className="text-amber-600 dark:text-amber-400">Class in progress, not counted yet</p>}
                     </div>
                   );
                 }}
@@ -164,59 +143,15 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-400 py-4">No courses found.</p>
         ) : (
           <div className="space-y-3">
-            {data.map((course) => {
-              const status = getAttendanceStatus(course.percentage, course.total);
-              return (
-              <div key={course.courseId} className="flex items-center gap-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">{course.courseName}</span>
-                    <span className="font-mono text-xs text-slate-400">{course.courseCode}</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${status.bar}`}
-                      style={{ width: `${course.percentage}%` }}
-                    />
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className={`text-sm font-bold ${status.text}`}>
-                    {course.percentage}%
-                  </p>
-                  <p className="text-xs text-slate-400">{course.attended}/{course.total}</p>
-                </div>
-                <Badge variant={status.badge}>{status.label}</Badge>
-              </div>
-              );
-            })}
+            {data.map((course) => (
+              <CourseBreakdownRow key={course.courseId} course={course} onDelist={setDelisting} />
+            ))}
           </div>
         )}
       </Card>
+
+      <DelistSheet open={!!delisting} onClose={() => setDelisting(null)} course={delisting} onDone={refresh} />
     </div>
   );
 }
 
-function StatCard({ label, value, sub, icon, accent }: {
-  label: string; value: string | number; sub: string;
-  icon: React.ReactNode; accent: "green" | "yellow" | "red" | "blue" | "orange" | "slate";
-}) {
-  const colors = {
-    green: "bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400",
-    yellow: "bg-yellow-50 text-yellow-600 dark:bg-yellow-950 dark:text-yellow-400",
-    red: "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400",
-    blue: "bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400",
-    orange: "bg-orange-50 text-orange-600 dark:bg-orange-950 dark:text-orange-400",
-    slate: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
-  };
-  return (
-    <Card className="p-4">
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-3 ${colors[accent]}`}>
-        {icon}
-      </div>
-      <p className="text-2xl font-bold text-slate-900 dark:text-white">{value}</p>
-      <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-0.5">{label}</p>
-      <p className="text-xs text-slate-400 mt-0.5">{sub}</p>
-    </Card>
-  );
-}

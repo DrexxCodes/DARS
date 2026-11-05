@@ -16,7 +16,7 @@ const CHUNK = 40; // students read in parallel
  * GET /api/admin/export?courseId=…[&date=YYYY-MM-DD]
  *
  * Returns the raw attendance data for one course (all its classes, or only the classes held on `date`).
- * The PDF itself is built in the browser. The student list is strict: the course's levels plus approved carry-overs. Super admins can export any course; scoped admins only their own.
+ * The PDF itself is built in the browser. The student list is strict: the course's levels plus approved Added Courses, minus anyone who delisted. Super admins can export any course; scoped admins only their own.
  */
 export async function GET(req: NextRequest) {
   const admin = await verifyAdmin(req);
@@ -33,11 +33,12 @@ export async function GET(req: NextRequest) {
     const [course] = await getAccessibleCourses(admin, courseId);
     if (!course) return NextResponse.json({ error: "You don't have access to that course." }, { status: 403 });
 
-    const [courseDoc, sessionsSnap, studentsSnap, approvedSnap, excluded] = await Promise.all([
+    const [courseDoc, sessionsSnap, studentsSnap, enrolSnap, excluded] = await Promise.all([
       db.collection("courses").doc(courseId).get(),
       db.collection("classes").doc(courseId).collection("sessions").orderBy("createdAt", "asc").get(),
       db.collection("students").select("name").get(),
-      enrollmentsCol(courseId).where("status", "==", "approved").get(),
+      // Approved Added Courses join the roster; delisted students leave it. One query for both.
+      enrollmentsCol(courseId).where("status", "in", ["approved", "delisted"]).get(),
       excludedRegNumbers(),
     ]);
 
@@ -63,9 +64,11 @@ export async function GET(req: NextRequest) {
     const sessionIds = new Set(sessions.map((s) => s.id));
 
     // Strict roster: only students the course is for. That's the course's levels, departments and admission types
-    // (everyone if none are set) plus students with an approved carry-over. Other students never appear, even if they
-    // have a record. A reg number that isn't valid (or whose department/admission type can't be read) is in no PDF.
-    const carryovers = new Set(approvedSnap.docs.map((d) => d.id));
+    // (everyone if none are set) plus students with an approved Added Course, minus students who delisted. Other students
+    // never appear, even if they have a record. A reg number that isn't valid (or whose department/admission type can't
+    // be read) is in no PDF.
+    const addedCourse = new Set(enrolSnap.docs.filter((d) => d.data().status === "approved").map((d) => d.id));
+    const delisted = new Set(enrolSnap.docs.filter((d) => d.data().status === "delisted").map((d) => d.id));
     const rank = <T extends { id: string }>(list: readonly T[], id: string | null) => {
       const i = list.findIndex((x) => x.id === id);
       return i === -1 ? list.length : i;
@@ -73,7 +76,8 @@ export async function GET(req: NextRequest) {
     const toRead: ExportStudent[] = studentsSnap.docs
       .filter((d) => isValidRegNumber(d.id))
       .filter((d) => !excluded.has(d.id.toUpperCase())) // admins who opted out of exports
-      .filter((d) => courseVisibleToStudent(audience, d.id) || carryovers.has(d.id))
+      .filter((d) => !delisted.has(d.id))
+      .filter((d) => courseVisibleToStudent(audience, d.id) || addedCourse.has(d.id))
       .map((d) => ({
         regNumber: d.id,
         name: String(d.data().name ?? ""),

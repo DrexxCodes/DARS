@@ -74,7 +74,7 @@ export function Badge({ children, variant = "green" }: BadgeProps) {
     critical: "bg-red-600 text-white dark:bg-red-700",
   };
   return (
-    <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium", variants[variant])}>
+    <span className={cn("inline-flex items-center whitespace-nowrap px-2.5 py-0.5 rounded-full text-xs font-medium", variants[variant])}>
       {children}
     </span>
   );

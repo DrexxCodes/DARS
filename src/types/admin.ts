@@ -63,7 +63,7 @@ export interface MarkableSession {
   present: boolean;
 }
 
-/** A student's carry-over application for a course, as shown to the course's admins. */
+/** A student's Added Course request, as shown to the course's admins. */
 export interface CarryoverRequest {
   regNumber: string;
   name: string;

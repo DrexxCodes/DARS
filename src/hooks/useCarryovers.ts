@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { clientAuth } from "@/lib/firebase-client";
 import type { CarryoverEntry } from "@/types/mark";
 
-/** The signed-in student's carry-over applications (courses outside their level and where each one stands). */
+/** The signed-in student's Added Course requests (courses outside their level and where each one stands), plus any course they've delisted. */
 export function useCarryovers(enabled: boolean) {
   const [entries, setEntries] = useState<CarryoverEntry[]>([]);
 

@@ -487,7 +487,7 @@ export default function AdminCreatePage() {
             )}
           </Card>
 
-          {/* Carry-over applications from students of other levels */}
+          {/* Added Course requests from students of other levels */}
           <CarryoverRequestsCard courseId={selectedCourse} />
 
           {/* Export attendance (whole course or one day) */}

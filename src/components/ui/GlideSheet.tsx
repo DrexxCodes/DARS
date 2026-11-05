@@ -9,6 +9,8 @@ interface GlideSheetProps {
   title: string;
   subtitle?: string;
   icon?: ReactNode;
+  /** "danger" tints the icon red, for destructive confirmations. */
+  tone?: "default" | "danger";
   children: ReactNode;
 }
 
@@ -16,7 +18,7 @@ interface GlideSheetProps {
  * Frosted bottom sheet that glides up from the bottom edge (all screen sizes, width-capped on large ones).
  * `data-gate-sheet` lets the profile gate know taps inside it are the answer, not a blocked action.
  */
-export default function GlideSheet({ open, onClose, title, subtitle, icon, children }: GlideSheetProps) {
+export default function GlideSheet({ open, onClose, title, subtitle, icon, tone = "default", children }: GlideSheetProps) {
   const titleId = useId();
 
   useEffect(() => {
@@ -42,7 +44,9 @@ export default function GlideSheet({ open, onClose, title, subtitle, icon, child
           <X className="h-4 w-4" />
         </button>
         <div className="mb-5 flex items-center gap-3 pr-8">
-          {icon && <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-brand-100 text-brand-600 dark:bg-brand-950 dark:text-brand-400">{icon}</div>}
+          {icon && (
+            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${tone === "danger" ? "bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400" : "bg-brand-100 text-brand-600 dark:bg-brand-950 dark:text-brand-400"}`}>{icon}</div>
+          )}
           <div className="min-w-0">
             <h2 id={titleId} className="text-lg font-bold text-slate-900 dark:text-white">{title}</h2>
             {subtitle && <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>}

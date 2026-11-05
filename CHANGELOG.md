@@ -1,5 +1,30 @@
 # DARS Changelog
 
+## v2.7.0 — Delist a course, "Added Course" wording, in-progress classes aren't misses, mobile fixes
+
+### Added
+- **Delist a course.** A student can drop any course they take, including one from their own level (Dashboard > Course Breakdown > **Delist**). A bottom sheet says it is permanent and that all attendance records for the course will be cleared; on confirm the records are wiped and the course disappears from their dashboard, Mark page and exports. **Super admins can delist a student** from Student Lookup (**Delist student** on a course card), with the same sheet.
+  - Stored as `courses/{courseId}/enrollments/{REG}` with `status: "delisted"` (plus `delistedAt`, `delistedBy`, `delistedByName`). One rule decides who takes a course (`isEnrolled` in `src/lib/enrollment.ts`): delisted wins, then "course is for their level", then an approved Added Course.
+  - The wipe (`src/lib/delist.ts`) deletes the student's records in transactional chunks and lowers each session's `totalPresence` and the student's own `totalPresence` with them, so counters stay exact and a double tap can't decrement twice.
+  - A delisted student can't mark the course (`403 DELISTED`, also when an admin marks for them), can't be marked present by an admin, and is left out of that course's PDF export. They also can't re-add it as an Added Course, and admins can't approve or "reject" a delisted entry (that would silently re-enrol them).
+  - New routes: `POST /api/mark/delist` (student), `POST /api/admin/students/[regNumber]/delist` (super admin only). Activity log: `delist_course_self` / `delist_course_admin`.
+- **Class in progress.** If a class is running for a course the student takes and they haven't marked it yet, it is no longer counted as a miss. It's left out of their total until they mark or the class ends. The Dashboard shows a "A class is in progress" banner (links to Mark) and a "Class in progress" chip on that course; Student Lookup shows the same chip. The Dashboard also refreshes when the student returns to the app. Uses one cached query for running classes (`src/lib/live-classes.ts`, 4 s) and one extra document read per running course.
+
+### Changed
+- **"Carry Over" is now "Added Course"** everywhere students and admins see it (Mark page link and dialog, course tag, Classes page card, Student Lookup, error messages). The action reads "Add" / "Add again". Internal names (`/api/mark/carryover`, `/api/admin/carryover`, `enrollments`, `CarryoverDialog`, ...) are unchanged so nothing stored or deployed breaks.
+- `/api/mark` reads the student's enrolment doc in the same parallel round as everything else (was a separate sequential read for off-level students). Cost: one extra document read per self-mark for on-level students, no extra latency.
+- The student attendance GET reads enrolment docs for every course it needs to judge (was off-level courses only), in one batched read.
+- Export roster query fetches approved and delisted enrolments together (one query, as before).
+- Student sign-in helper moved to `src/lib/student-auth.ts` (shared by the Added Course and delist routes).
+
+### Fixed (mobile)
+- **Location Tags:** a saved location's name and coordinates were squeezed to nothing by the Range / Set Primary / Delete buttons. Rows now stack on phones (details on top, buttons underneath) and go back to one row from `sm` up. Extracted into `LocationTagRow`.
+- **Student Lookup:** the student's name and reg number overlapped the Mark present / Revoke a day buttons. The header card now stacks on phones. An empty name shows "No name on file". Badges no longer wrap ("50% · Normal" stayed on one line).
+
+### Setup
+- No new packages and no new Firestore indexes (the roster query is a single-field `in`, the live-class query a single-field equality).
+- Existing data needs no migration: no enrolment doc still means "level rule applies".
+
 ## v2.6.1 — Weak-signal banner, clearer weak-fix rejection, editable tag range
 
 ### Added

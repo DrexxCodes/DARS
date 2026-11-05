@@ -82,10 +82,11 @@ export default function MarkPage() {
 
   // Only the courses assigned to this student's level (level comes from the admission year in their reg number)
   const level = levelOf(profile.regNumber);
-  // Their level's courses plus any carry-over an admin has approved
+  // Their level's courses plus any Added Course an admin has approved, minus anything they've delisted
   const approvedCarryovers = new Set(carryovers.filter((e) => e.status === "approved").map((e) => e.courseId));
+  const delistedIds = new Set(carryovers.filter((e) => e.status === "delisted").map((e) => e.courseId));
   const pendingCarryovers = carryovers.filter((e) => e.status === "pending").length;
-  const courses = allCourses.filter((c) => courseVisibleToStudent(c, profile.regNumber) || approvedCarryovers.has(c.id));
+  const courses = allCourses.filter((c) => !delistedIds.has(c.id) && (courseVisibleToStudent(c, profile.regNumber) || approvedCarryovers.has(c.id)));
 
   const selectedGlobal = selectedCourse ? globals[selectedCourse] : null;
   const selectedCourseName = courses.find((c) => c.id === selectedCourse)?.name || "";
@@ -137,7 +138,7 @@ export default function MarkPage() {
                   className="mt-4 w-full flex items-center justify-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-brand-600 dark:hover:text-brand-400 transition-colors"
                 >
                   <GraduationCap className="w-3.5 h-3.5" />
-                  Have a carry-over course? Apply here
+                  Need to add a course? Add it here
                   {pendingCarryovers > 0 && <span className="text-yellow-600 dark:text-yellow-400">· {pendingCarryovers} pending</span>}
                 </button>
               )}

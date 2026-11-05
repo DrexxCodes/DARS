@@ -18,7 +18,7 @@ async function resolveCourse(req: NextRequest, courseId: unknown) {
   return { admin, course };
 }
 
-// GET ?courseId= — pending applications and approved carry-overs for the course
+// GET ?courseId= — pending requests and approved Added Courses for the course
 export async function GET(req: NextRequest) {
   try {
     const r = await resolveCourse(req, new URL(req.url).searchParams.get("courseId"));
@@ -39,12 +39,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ requests });
   } catch (error) {
-    console.error("Carry-over requests error:", error);
+    console.error("Added course requests error:", error);
     return NextResponse.json({ error: "Failed to load requests." }, { status: 500 });
   }
 }
 
-// POST { courseId, regNumber, decision: "approve" | "reject" } — "reject" also removes an approved carry-over
+// POST { courseId, regNumber, decision: "approve" | "reject" } — "reject" also removes an approved Added Course
 export async function POST(req: NextRequest) {
   try {
     const { courseId, regNumber, decision } = await req.json();
@@ -58,8 +58,10 @@ export async function POST(req: NextRequest) {
     const ref = enrollmentRef(r.course.id, reg);
     const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      if (!snap.exists) return { error: "No application from that student." as const };
+      if (!snap.exists) return { error: "No request from that student." as const };
       const status = snap.data()!.status;
+      // A delisted student is out of the course. Approving or "rejecting" here would silently re-enrol them.
+      if (status === "delisted") return { error: "That student delisted this course." as const };
       if (decision === "approve" && status !== "pending") return { error: "That application has already been dealt with." as const };
       if (decision === "reject" && status === "rejected") return { error: "That application has already been dealt with." as const };
       tx.update(ref, {
@@ -84,7 +86,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Carry-over decision error:", error);
+    console.error("Added course decision error:", error);
     return NextResponse.json({ error: "Failed to save your decision." }, { status: 500 });
   }
 }

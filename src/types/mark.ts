@@ -23,9 +23,9 @@ export interface MarkStatusPayload {
   globals: Array<GlobalState & { id: string }>;
 }
 
-export type CarryoverStatus = "none" | "pending" | "approved" | "rejected";
+export type CarryoverStatus = "none" | "pending" | "approved" | "rejected" | "delisted";
 
-/** A course outside the student's level, with where their carry-over application stands. */
+/** A course the student can add ("Added Course") or has delisted, with where their request stands. */
 export interface CarryoverEntry {
   courseId: string;
   code: string;

@@ -7,7 +7,7 @@ import { distanceInMeters } from "@/lib/geo";
 import { courseVisibleToStudent } from "@/lib/admission";
 import { hasBirthday } from "@/lib/birthday";
 import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
-import { audienceOf, enrollmentRef, NOT_ENROLLED_MESSAGE } from "@/lib/enrollment";
+import { audienceOf, DELISTED_MESSAGE, DELISTED_MESSAGE_FOR_ADMIN, enrollmentRef, isEnrolled, NOT_ENROLLED_MESSAGE } from "@/lib/enrollment";
 import { ttlCache } from "@/lib/ttl-cache";
 import { LOCATION_LIMITS } from "@/constants/location";
 import { DEVICE_CONFLICT, SIGNALS_REQUIRED, buildDeviceClaims, getClientIp, parseDeviceSignals } from "@/lib/device-check";
@@ -90,17 +90,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid registration number format." }, { status: 400 });
     }
 
-    // A student can only mark courses assigned to their level and department, or a carry-over an admin has approved.
-    // Applies to an admin marking for another student too, so the course's records only ever hold its own students.
-    if (!courseVisibleToStudent(courseAudience, normalized)) {
-      const enrol = await enrollmentRef(courseId, normalized).get(); // only reached for off-level students
-      if (!(enrol.exists && enrol.data()?.status === "approved")) {
-        return NextResponse.json(
-          { error: targetRegNumber ? "That student isn't in this course's level and has no approved carry-over." : NOT_ENROLLED_MESSAGE, code: "WRONG_LEVEL" },
-          { status: 403 }
-        );
-      }
-    }
+    // Whether the course is for this student's level/department/admission type. Whether they actually take it (an approved
+    // Added Course, or not delisted) needs their enrolment doc, which is read alongside everything else in round 2 below
+    // instead of as its own sequential round trip.
+    const onLevel = courseVisibleToStudent(courseAudience, normalized);
 
     // Device signals are required for self-marks. Admin overrides skip them (the admin's phone would collide with itself).
     const signals = targetRegNumber ? null : parseDeviceSignals(fingerprint, deviceId);
@@ -157,12 +150,25 @@ export async function POST(req: NextRequest) {
       ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, regNumber: normalized, ip, signals })
       : null;
 
-    const [studentDoc, existingMark, claimSnaps, location] = await Promise.all([
+    const [studentDoc, existingMark, claimSnaps, location, enrolDoc] = await Promise.all([
       studentRef.get(),
       attendanceRef.get(),
       claims ? db.getAll(...claims.refs) : Promise.resolve([]),
       loadLocation(global.locationId),
+      enrollmentRef(courseId, normalized).get(),
     ]);
+
+    // Applies to an admin marking for another student too, so a course's records only ever hold students who take it.
+    const enrolStatus = enrolDoc.exists ? (enrolDoc.data()?.status as string | undefined) : undefined;
+    if (enrolStatus === "delisted") {
+      return NextResponse.json({ error: targetRegNumber ? DELISTED_MESSAGE_FOR_ADMIN : DELISTED_MESSAGE, code: "DELISTED" }, { status: 403 });
+    }
+    if (!isEnrolled(onLevel, enrolStatus)) {
+      return NextResponse.json(
+        { error: targetRegNumber ? "That student isn't in this course's level and has no approved Added Course." : NOT_ENROLLED_MESSAGE, code: "WRONG_LEVEL" },
+        { status: 403 }
+      );
+    }
 
     if (!location) {
       return NextResponse.json(

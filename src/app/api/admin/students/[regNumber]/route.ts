@@ -3,7 +3,8 @@ import { db, auth } from "@/lib/firebase-admin";
 import { verifyAdmin } from "@/lib/admin-auth";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import { courseVisibleToStudent } from "@/lib/admission";
-import { enrollmentRef } from "@/lib/enrollment";
+import { enrollmentStatuses, isEnrolled } from "@/lib/enrollment";
+import { loadLiveClasses } from "@/lib/live-classes";
 
 interface Course {
   totalClasses: number;
@@ -74,26 +75,25 @@ export async function GET(
     const coursesSnap = await db.collection("courses").get();
     let courses: Course[] = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Course));
 
-    // A student's own dashboard shows only their courses: their level's, plus approved carry-overs.
-    // (Admins looking a student up still see every course, as before.)
-    if (user.regNumber === regNumber) {
-      const offLevel = courses.filter((c) => !courseVisibleToStudent(c, regNumber));
-      const enrol = offLevel.length ? await db.getAll(...offLevel.map((c) => enrollmentRef(c.id, regNumber))) : [];
-      const approved = new Set(offLevel.filter((_, i) => enrol[i].exists && enrol[i].data()?.status === "approved").map((c) => c.id));
-      courses = courses.filter((c) => courseVisibleToStudent(c, regNumber) || approved.has(c.id));
-    }
-
     const isDefinedAdmin = user.admin && user.scope === "defined";
     const isSelf = user.regNumber === regNumber;
-
-    // Does the student actually take each course? Their level/department, or an approved carry-over.
-    // (Self view is already filtered above, so everything there is offered.) Only read carry-overs for courses this
-    // admin can see and that are off the student's level, so scoped admins pay for nothing extra.
     const inView = (c: Course) => !isDefinedAdmin || (c.assignedAdmins || []).includes(decoded.uid);
-    const offLevel = isSelf ? [] : courses.filter((c) => inView(c) && !courseVisibleToStudent(c, regNumber));
-    const enrol = offLevel.length ? await db.getAll(...offLevel.map((c) => enrollmentRef(c.id, regNumber))) : [];
-    const carryover = new Set(offLevel.filter((_, i) => enrol[i].exists && enrol[i].data()?.status === "approved").map((c) => c.id));
-    const offered = (c: Course) => isSelf || courseVisibleToStudent(c, regNumber) || carryover.has(c.id);
+
+    // Where the student stands in each course, in one batched read: delisted, approved Added Course, or nothing on file.
+    // Only courses this caller can see are read, so scoped admins pay for nothing extra. A student's own view needs every
+    // course, because a delisted course has to disappear even when it's on their level.
+    const statuses = await enrollmentStatuses(courses.filter((c) => isSelf || inView(c)).map((c) => c.id), regNumber);
+    const delisted = (c: Course) => statuses.get(c.id) === "delisted";
+    // Does the student actually take the course? Their level/department/admission type or an approved Added Course, and not delisted.
+    const enrolled = (c: Course) => isEnrolled(courseVisibleToStudent(c, regNumber), statuses.get(c.id));
+
+    // A student's own dashboard shows only the courses they take. (Admins looking a student up still see every course, as before.)
+    if (isSelf) courses = courses.filter(enrolled);
+    const offered = (c: Course) => isSelf || enrolled(c);
+
+    // Classes running right now (one cached query). A class in progress that the student hasn't marked yet isn't an
+    // absence: it's left out of their total until they mark or the class ends.
+    const live = await loadLiveClasses();
 
     const attendanceData = await Promise.all(
       courses.map(async (course) => {
@@ -108,18 +108,43 @@ export async function GET(
             percentage: 0,
             locked: true, // scoped admin cannot see this
             offered: false,
+            delisted: false,
+            pendingClass: false,
           };
         }
 
-        // Server-side count: Firestore bills 1 read per 1,000 matching records (minimum 1) instead of 1 per record,
-        // and the number is exactly what reading every record and taking .size would give.
-        const countSnap = await db
+        if (delisted(course)) {
+          // Their records for it were wiped when they delisted, so there's nothing to count
+          return {
+            courseId: course.id,
+            courseName: course.name,
+            courseCode: course.code,
+            attended: 0,
+            total: 0,
+            percentage: 0,
+            locked: false,
+            offered: false,
+            delisted: true,
+            pendingClass: false,
+          };
+        }
+
+        const recordsCol = db
           .collection("students").doc(regNumber)
           .collection("attendance").doc(course.id)
-          .collection("records").count().get();
+          .collection("records");
+        const liveClass = offered(course) ? live.get(course.id) : undefined;
 
-        // Use denormalized counter
-        const total: number = course.totalClasses ?? 0;
+        // Server-side count: Firestore bills 1 read per 1,000 matching records (minimum 1) instead of 1 per record,
+        // and the number is exactly what reading every record and taking .size would give.
+        const [countSnap, liveMark] = await Promise.all([
+          recordsCol.count().get(),
+          liveClass ? recordsCol.doc(liveClass.classId).get() : Promise.resolve(null),
+        ]);
+
+        const pendingClass = !!liveClass && !liveMark?.exists;
+        // Use denormalized counter, minus the class still waiting on this student
+        const total: number = Math.max(0, (course.totalClasses ?? 0) - (pendingClass ? 1 : 0));
         const attended = countSnap.data().count;
 
         return {
@@ -131,6 +156,8 @@ export async function GET(
           percentage: total > 0 ? Math.round((attended / total) * 100) : 0,
           locked: false,
           offered: offered(course),
+          delisted: false,
+          pendingClass,
         };
       })
     );

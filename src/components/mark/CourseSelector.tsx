@@ -19,7 +19,7 @@ interface CourseSelectorProps {
   selected: string | null;
   onSelect: (id: string) => void;
   loading: boolean;
-  /** Courses the student takes as an approved carry-over (tagged in the list). */
+  /** Courses the student takes as an approved Added Course (tagged in the list). */
   carryoverIds?: Set<string>;
 }
 
@@ -75,7 +75,7 @@ export default function CourseSelector({ courses, globals, selected, onSelect, l
                 <div>
                   <p className="font-semibold text-slate-900 dark:text-white text-sm">{course.name}</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                    {course.code}{carryoverIds?.has(course.id) && <span className="ml-2 font-sans text-blue-600 dark:text-blue-400">Carry-over</span>}
+                    {course.code}{carryoverIds?.has(course.id) && <span className="ml-2 font-sans text-blue-600 dark:text-blue-400">Added Course</span>}
                   </p>
                 </div>
               </div>

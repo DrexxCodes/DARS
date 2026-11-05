@@ -3,25 +3,17 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { Card, Button, Input, Badge, Skeleton, Dialog } from "@/components/ui";
+import { Card, Button, Input, Skeleton, Dialog } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getBestPosition } from "@/lib/geolocation-client";
 import { accuracyTier, ACCURACY_GOOD_M, ACCURACY_POOR_M } from "@/lib/location-accuracy";
 import { RADIUS_LIMITS } from "@/constants/location";
 import { toast } from "sonner";
 import {
-  MapPin, Plus, Star, Trash2, Tag as TagIcon, Crosshair, AlertTriangle, Ruler,
+  MapPin, Plus, Tag as TagIcon, Crosshair, AlertTriangle, Ruler,
 } from "lucide-react";
-
-interface LocationTag {
-  id: string;
-  name: string;
-  lat: number;
-  lng: number;
-  radiusMeters: number;
-  isPrimary: boolean;
-  createdAt: number;
-}
+import LocationTagRow from "@/components/admin/LocationTagRow";
+import type { LocationTag } from "@/types/location";
 
 type CaptureStatus = "idle" | "capturing" | "captured" | "denied" | "unavailable" | "unsupported";
 
@@ -218,7 +210,7 @@ export default function TagsPage() {
       </div>
 
       {/* Existing tags */}
-      <Card className="p-6">
+      <Card className="p-4 sm:p-6">
         <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-4">
           Saved Locations
         </h2>
@@ -232,52 +224,16 @@ export default function TagsPage() {
         ) : (
           <div className="space-y-2">
             {locations.map((loc) => (
-              <div
+              <LocationTagRow
                 key={loc.id}
-                className="flex items-center justify-between gap-3 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
-                    loc.isPrimary ? "bg-brand-100 dark:bg-brand-900" : "bg-slate-100 dark:bg-slate-800"
-                  }`}>
-                    <MapPin className={`w-4 h-4 ${loc.isPrimary ? "text-brand-600 dark:text-brand-400" : "text-slate-400"}`} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-slate-900 dark:text-white text-sm truncate">{loc.name}</p>
-                      {loc.isPrimary && <Badge variant="green">Primary</Badge>}
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                      {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)} · {loc.radiusMeters}m radius
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button
-                    size="sm" variant="outline" icon={<Ruler className="w-3.5 h-3.5" />}
-                    onClick={() => { setEditing(loc); setEditRadius(String(loc.radiusMeters)); }}
-                  >
-                    Range
-                  </Button>
-                  {!loc.isPrimary && (
-                    <Button
-                      size="sm" variant="outline" icon={<Star className="w-3.5 h-3.5" />}
-                      loading={settingPrimaryId === loc.id}
-                      onClick={() => handleSetPrimary(loc.id)}
-                    >
-                      Set Primary
-                    </Button>
-                  )}
-                  <Button
-                    size="sm" variant="danger" icon={<Trash2 className="w-3.5 h-3.5" />}
-                    loading={deletingId === loc.id}
-                    disabled={loc.isPrimary || locations.length === 1}
-                    onClick={() => handleDelete(loc.id, loc.name)}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              </div>
+                tag={loc}
+                canDelete={!loc.isPrimary && locations.length > 1}
+                settingPrimary={settingPrimaryId === loc.id}
+                deleting={deletingId === loc.id}
+                onEditRange={() => { setEditing(loc); setEditRadius(String(loc.radiusMeters)); }}
+                onSetPrimary={() => handleSetPrimary(loc.id)}
+                onDelete={() => handleDelete(loc.id, loc.name)}
+              />
             ))}
           </div>
         )}

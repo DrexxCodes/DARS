@@ -7,22 +7,15 @@ import { Card, Button, Input, Badge, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getAttendanceStatus } from "@/lib/utils";
 import { toast } from "sonner";
-import { Search, Lock, BookOpen, TrendingUp, User, Ban, Pencil, UserCheck } from "lucide-react";
+import { Search, Lock, BookOpen } from "lucide-react";
 import RevokeAttendanceDialog from "@/components/admin/RevokeAttendanceDialog";
 import MarkPresentDialog from "@/components/admin/MarkPresentDialog";
 import EditStudentNameDialog from "@/components/admin/EditStudentNameDialog";
+import StudentHeaderCard from "@/components/admin/StudentHeaderCard";
+import StudentCourseCard from "@/components/admin/StudentCourseCard";
+import DelistSheet from "@/components/course/DelistSheet";
+import type { CourseAttendance } from "@/types/attendance";
 
-interface CourseAttendance {
-  courseId: string;
-  courseName: string;
-  courseCode: string;
-  attended: number;
-  total: number;
-  percentage: number;
-  locked: boolean;
-  /** The student takes this course (their level/department, or an approved carry-over). */
-  offered?: boolean;
-}
 interface Overall { attended: number; total: number; percentage: number; courses: number }
 interface StudentResult {
   regNumber: string;
@@ -42,6 +35,7 @@ export default function StudentSearchPage() {
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [markOpen, setMarkOpen] = useState(false);
   const [editNameOpen, setEditNameOpen] = useState(false);
+  const [delisting, setDelisting] = useState<CourseAttendance | null>(null);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -78,9 +72,11 @@ export default function StudentSearchPage() {
 
   if (authLoading || !profile?.admin) return null;
 
+  const isSuper = profile.scope === "super";
   const visibleCourses = courses.filter((c) => !c.locked);
-  const assignedCourses = visibleCourses.filter((c) => c.offered !== false); // courses the student actually takes
-  const notOffered = visibleCourses.filter((c) => c.offered === false);
+  const delistedCourses = visibleCourses.filter((c) => c.delisted);
+  const assignedCourses = visibleCourses.filter((c) => c.offered !== false && !c.delisted); // courses the student actually takes
+  const notOffered = visibleCourses.filter((c) => c.offered === false && !c.delisted);
   const overallStatus = overall ? getAttendanceStatus(overall.percentage, overall.total) : null;
   const lockedCourses = courses.filter((c) => c.locked);
 
@@ -93,7 +89,7 @@ export default function StudentSearchPage() {
         </p>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -110,48 +106,13 @@ export default function StudentSearchPage() {
       </Card>
 
       {student && (
-        <Card className="p-5 flex flex-wrap items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center shrink-0">
-            <User className="w-5 h-5 text-brand-700 dark:text-brand-300" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <p className="font-bold text-slate-900 dark:text-white truncate">{student.name}</p>
-              <button
-                onClick={() => setEditNameOpen(true)}
-                className="p-1 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-                title="Edit name"
-                aria-label="Edit name"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-sm text-slate-500 font-mono">{student.regNumber}</p>
-            {student.department && <p className="text-xs text-slate-400 mt-0.5">{student.department}</p>}
-          </div>
-          {assignedCourses.length > 0 && (
-            <div className="flex gap-2 ml-auto">
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-brand-700 dark:text-brand-300"
-                icon={<UserCheck className="w-3.5 h-3.5" />}
-                onClick={() => setMarkOpen(true)}
-              >
-                Mark present
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-red-600 dark:text-red-400"
-                icon={<Ban className="w-3.5 h-3.5" />}
-                onClick={() => setRevokeOpen(true)}
-              >
-                Revoke a day
-              </Button>
-            </div>
-          )}
-        </Card>
+        <StudentHeaderCard
+          student={student}
+          showActions={assignedCourses.length > 0}
+          onEditName={() => setEditNameOpen(true)}
+          onMarkPresent={() => setMarkOpen(true)}
+          onRevoke={() => setRevokeOpen(true)}
+        />
       )}
 
       {!searching && student && overall && overall.courses > 0 && overallStatus && (
@@ -180,43 +141,9 @@ export default function StudentSearchPage() {
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Courses this student takes</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {assignedCourses.map((c) => {
-                  const status = getAttendanceStatus(c.percentage, c.total);
-                  const colour = status.card;
-
-                  return (
-                    <Card key={c.courseId} className={`p-4 space-y-3 ${colour}`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <BookOpen className="w-4 h-4 text-slate-500" />
-                          <span className="text-xs font-mono font-bold text-slate-600 dark:text-slate-400">
-                            {c.courseCode}
-                          </span>
-                        </div>
-                        <Badge variant={status.badge}>
-                          {c.total === 0 ? status.label : `${c.percentage}% · ${status.label}`}
-                        </Badge>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-900 dark:text-white leading-tight">
-                        {c.courseName}
-                      </p>
-                      <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span className="flex items-center gap-1">
-                          <TrendingUp className="w-3 h-3" />
-                          {c.attended} / {c.total} classes
-                        </span>
-                        {c.total > 0 && (
-                          <div className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all ${status.bar}`}
-                              style={{ width: `${Math.min(c.percentage, 100)}%` }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  );
-                })}
+                {assignedCourses.map((c) => (
+                  <StudentCourseCard key={c.courseId} course={c} onDelist={isSuper ? setDelisting : undefined} />
+                ))}
               </div>
             </div>
           )}
@@ -224,11 +151,25 @@ export default function StudentSearchPage() {
           {notOffered.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Not offered by this student</p>
-              <p className="text-xs text-slate-400 px-1">Your courses outside their level or department, with no approved carry-over. Not counted in the overall rate.</p>
+              <p className="text-xs text-slate-400 px-1">Your courses outside their level or department, with no approved Added Course. Not counted in the overall rate.</p>
               <div className="flex flex-wrap gap-2">
                 {notOffered.map((c) => (
                   <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
                     {c.courseCode}{c.attended > 0 ? ` · ${c.attended} record${c.attended === 1 ? "" : "s"}` : ""}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {delistedCourses.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Delisted courses</p>
+              <p className="text-xs text-slate-400 px-1">Their attendance for these was cleared when they were delisted. Not counted in the overall rate.</p>
+              <div className="flex flex-wrap gap-2">
+                {delistedCourses.map((c) => (
+                  <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
+                    {c.courseCode}
                   </span>
                 ))}
               </div>
@@ -280,6 +221,13 @@ export default function StudentSearchPage() {
           onClose={() => setEditNameOpen(false)}
           onSaved={(name) => setStudent((prev) => (prev ? { ...prev, name } : prev))}
           student={{ regNumber: student.regNumber, name: student.name }}
+        />
+        <DelistSheet
+          open={!!delisting}
+          onClose={() => setDelisting(null)}
+          course={delisting}
+          student={{ regNumber: student.regNumber, name: student.name }}
+          onDone={handleSearch}
         />
         <RevokeAttendanceDialog
           open={revokeOpen}

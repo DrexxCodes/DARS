@@ -31,10 +31,10 @@ export default function CarryoverDialog({ open, onClose, entries, onChanged }: P
       const data = await res.json();
       if (res.status === 403 && data.code === BIRTHDAY_REQUIRED_CODE) openBirthdaySheet();
       else if (!res.ok) toast.error(data.error || "Couldn't submit your application.");
-      else toast.success("Application sent. An admin for the course needs to approve it.");
+      else toast.success("Request sent. An admin for the course needs to approve it.");
       onChanged();
     } catch {
-      toast.error("Couldn't submit your application.");
+      toast.error("Couldn't send your request.");
     } finally {
       setApplying(null);
     }
@@ -43,10 +43,10 @@ export default function CarryoverDialog({ open, onClose, entries, onChanged }: P
   const levels = (e: CarryoverEntry) => e.levels.map(levelLabel).join(", ");
 
   return (
-    <Dialog open={open} onClose={onClose} title="Carry-over Courses" icon={<GraduationCap className="w-5 h-5" />}>
+    <Dialog open={open} onClose={onClose} title="Add a Course" icon={<GraduationCap className="w-5 h-5" />}>
       <div className="space-y-4">
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          Have a course from a lower level? Apply for it here. Once an admin approves, it shows up on your Mark page.
+          Taking a course that isn&apos;t on your level list? Add it here. Once an admin approves, it shows up on your Mark page as an Added Course.
         </p>
         {entries.length === 0 ? (
           <p className="text-sm text-center text-slate-500 dark:text-slate-400 py-3">No other courses available.</p>
@@ -60,13 +60,15 @@ export default function CarryoverDialog({ open, onClose, entries, onChanged }: P
                     {e.code}{levels(e) ? ` · ${levels(e)}` : ""}
                   </p>
                 </div>
-                {e.status === "approved" ? (
-                  <Badge variant="green">Approved</Badge>
+                {e.status === "delisted" ? (
+                  <Badge variant="slate">Delisted</Badge>
+                ) : e.status === "approved" ? (
+                  <Badge variant="green">Added</Badge>
                 ) : e.status === "pending" ? (
                   <Badge variant="yellow">Pending</Badge>
                 ) : (
                   <Button size="sm" variant="outline" loading={applying === e.courseId} onClick={() => apply(e.courseId)}>
-                    {e.status === "rejected" ? "Apply again" : "Apply"}
+                    {e.status === "rejected" ? "Add again" : "Add"}
                   </Button>
                 )}
               </li>

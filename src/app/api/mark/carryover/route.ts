@@ -1,64 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, auth } from "@/lib/firebase-admin";
+import { db } from "@/lib/firebase-admin";
 import { rateLimit } from "@/lib/rate-limit";
 import { admissionTypeOf, courseVisibleToAdmissionType, courseVisibleToDepartment, courseVisibleToStudent, departmentOf } from "@/lib/admission";
-import { audienceOf, enrollmentRef } from "@/lib/enrollment";
-import { REG_NUMBER_REGEX } from "@/lib/utils";
-import { hasBirthday } from "@/lib/birthday";
+import { audienceOf, enrollmentRef, enrollmentStatuses } from "@/lib/enrollment";
+import { getStudentCaller } from "@/lib/student-auth";
 import { BIRTHDAY_REQUIRED_CODE } from "@/constants/birthday";
 import type { CarryoverEntry, CarryoverStatus } from "@/types/mark";
 
-async function getStudentCaller(req: NextRequest) {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return { error: NextResponse.json({ error: "Please sign in.", code: "AUTH_REQUIRED" }, { status: 401 }) };
-  let uid: string;
-  try {
-    uid = (await auth.verifyIdToken(token)).uid;
-  } catch {
-    return { error: NextResponse.json({ error: "Your session has expired. Please sign in again.", code: "AUTH_REQUIRED" }, { status: 401 }) };
-  }
-  const userDoc = await db.collection("users").doc(uid).get();
-  const reg = userDoc.data()?.regNumber as string | undefined;
-  if (!userDoc.exists || !reg || !REG_NUMBER_REGEX.test(reg)) {
-    return { error: NextResponse.json({ error: "Your account has no registration number on file." }, { status: 400 }) };
-  }
-  return { uid, reg, name: String(userDoc.data()?.name ?? ""), birthday: hasBirthday(userDoc.data()) };
-}
-
-// GET — every active course outside the caller's level, with their carry-over status for each
+// GET — the courses the student can add (every active course of their department and admission type that isn't on their
+// level), with where each request stands, plus any course they've delisted (level or not) so the app can hide it.
 export async function GET(req: NextRequest) {
   try {
     const me = await getStudentCaller(req);
     if ("error" in me) return me.error;
 
     const department = departmentOf(me.reg);
-    const coursesSnap = await db.collection("courses").where("active", "==", true).get();
-    // Courses of their own department and admission type that aren't for their level. Carry-overs don't cross either.
     const admissionType = admissionTypeOf(me.reg);
-    const others = coursesSnap.docs.filter((d) => {
+    const coursesSnap = await db.collection("courses").where("active", "==", true).get();
+    const mine = coursesSnap.docs.filter((d) => {
       const a = audienceOf(d.data());
-      return courseVisibleToDepartment(a.departments, department) && courseVisibleToAdmissionType(a.admissionTypes, admissionType) && !courseVisibleToStudent(a, me.reg);
+      return courseVisibleToDepartment(a.departments, department) && courseVisibleToAdmissionType(a.admissionTypes, admissionType);
     });
 
-    const enrolSnaps = others.length ? await db.getAll(...others.map((d) => enrollmentRef(d.id, me.reg))) : [];
-    const entries: CarryoverEntry[] = others.map((d, i) => {
-      const e = enrolSnaps[i];
-      return {
+    const statuses = await enrollmentStatuses(mine.map((d) => d.id), me.reg);
+    const entries: CarryoverEntry[] = mine
+      .filter((d) => !courseVisibleToStudent(audienceOf(d.data()), me.reg) || statuses.get(d.id) === "delisted")
+      .map((d) => ({
         courseId: d.id,
         code: String(d.data().code ?? ""),
         name: String(d.data().name ?? ""),
         levels: Array.isArray(d.data().levels) ? (d.data().levels as number[]) : [],
-        status: (e.exists ? e.data()?.status : "none") as CarryoverStatus,
-      };
-    });
+        status: (statuses.get(d.id) ?? "none") as CarryoverStatus,
+      }));
     return NextResponse.json({ entries });
   } catch (error) {
-    console.error("Carry-over list error:", error);
+    console.error("Added course list error:", error);
     return NextResponse.json({ error: "Failed to load courses." }, { status: 500 });
   }
 }
 
-// POST { courseId } — apply for a carry-over course. An admin of that course has to approve it.
+// POST { courseId } — ask to add a course from another level (an "Added Course"). An admin of that course has to approve it.
 export async function POST(req: NextRequest) {
   try {
     const me = await getStudentCaller(req);
@@ -94,6 +75,7 @@ export async function POST(req: NextRequest) {
     const outcome = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const status = snap.data()?.status;
+      if (status === "delisted") return "delisted" as const; // a delisted course stays delisted; never overwrite it with a new request
       if (status === "approved") return "approved" as const;
       if (status === "pending") return "pending" as const;
       tx.set(ref, {
@@ -109,11 +91,12 @@ export async function POST(req: NextRequest) {
       return "created" as const;
     });
 
-    if (outcome === "approved") return NextResponse.json({ error: "You're already approved for this course." }, { status: 409 });
-    if (outcome === "pending") return NextResponse.json({ error: "You've already applied. Waiting for approval." }, { status: 409 });
+    if (outcome === "delisted") return NextResponse.json({ error: "You delisted this course, so it can't be added again." }, { status: 409 });
+    if (outcome === "approved") return NextResponse.json({ error: "You've already added this course." }, { status: 409 });
+    if (outcome === "pending") return NextResponse.json({ error: "You've already asked to add this course. Waiting for approval." }, { status: 409 });
     return NextResponse.json({ success: true }, { status: 201 });
   } catch (error) {
-    console.error("Carry-over apply error:", error);
-    return NextResponse.json({ error: "Failed to submit your application." }, { status: 500 });
+    console.error("Add course error:", error);
+    return NextResponse.json({ error: "Failed to send your request." }, { status: 500 });
   }
 }

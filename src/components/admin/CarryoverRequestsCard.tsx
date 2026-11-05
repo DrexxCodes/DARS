@@ -8,7 +8,7 @@ import { clientAuth } from "@/lib/firebase-client";
 import { levelLabel } from "@/constants/academics";
 import type { CarryoverRequest } from "@/types/admin";
 
-/** Carry-over applications for the selected course. Any admin of the course (or a super admin) can decide. */
+/** Added Course requests for the selected course. Any admin of the course (or a super admin) can decide. */
 export default function CarryoverRequestsCard({ courseId }: { courseId: string }) {
   const [requests, setRequests] = useState<CarryoverRequest[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -84,14 +84,14 @@ export default function CarryoverRequestsCard({ courseId }: { courseId: string }
   return (
     <Card className="p-6">
       <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-4 flex items-center gap-2">
-        <GraduationCap className="w-4 h-4" /> Carry-over Students
+        <GraduationCap className="w-4 h-4" /> Added Course Students
         {pending.length > 0 && <Badge variant="orange">{pending.length} pending</Badge>}
       </h2>
       {requests === null ? (
         <Skeleton className="h-14" />
       ) : requests.length === 0 ? (
         <p className="text-sm text-slate-400">
-          No carry-over applications. Students from other levels can apply from the Mark page; approved students are added to this course&apos;s attendance and exports.
+          No Added Course requests. Students from other levels can add this course from the Mark page; approved students are added to this course&apos;s attendance and exports.
         </p>
       ) : (
         <div className="space-y-4">
