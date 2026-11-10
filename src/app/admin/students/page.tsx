@@ -7,13 +7,15 @@ import { Card, Button, Input, Badge, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { getAttendanceStatus } from "@/lib/utils";
 import { toast } from "sonner";
-import { Search, Lock, BookOpen } from "lucide-react";
+import { Search, Lock, BookOpen, UserPlus } from "lucide-react";
 import RevokeAttendanceDialog from "@/components/admin/RevokeAttendanceDialog";
 import MarkPresentDialog from "@/components/admin/MarkPresentDialog";
 import EditStudentNameDialog from "@/components/admin/EditStudentNameDialog";
 import StudentHeaderCard from "@/components/admin/StudentHeaderCard";
 import StudentCourseCard from "@/components/admin/StudentCourseCard";
 import DelistSheet from "@/components/course/DelistSheet";
+import RelistSheet from "@/components/course/RelistSheet";
+import ResetDeviceSheet from "@/components/admin/ResetDeviceSheet";
 import type { CourseAttendance } from "@/types/attendance";
 
 interface Overall { attended: number; total: number; percentage: number; courses: number }
@@ -21,6 +23,8 @@ interface StudentResult {
   regNumber: string;
   name: string;
   department?: string;
+  deviceLinked?: boolean;
+  deviceLinkedAt?: number | null;
 }
 
 export default function StudentSearchPage() {
@@ -36,6 +40,8 @@ export default function StudentSearchPage() {
   const [markOpen, setMarkOpen] = useState(false);
   const [editNameOpen, setEditNameOpen] = useState(false);
   const [delisting, setDelisting] = useState<CourseAttendance | null>(null);
+  const [relisting, setRelisting] = useState<CourseAttendance | null>(null);
+  const [resetDeviceOpen, setResetDeviceOpen] = useState(false);
 
   useEffect(() => {
     if (!authLoading && (!profile || !profile.admin)) router.push("/");
@@ -112,6 +118,7 @@ export default function StudentSearchPage() {
           onEditName={() => setEditNameOpen(true)}
           onMarkPresent={() => setMarkOpen(true)}
           onRevoke={() => setRevokeOpen(true)}
+          onResetDevice={isSuper ? () => setResetDeviceOpen(true) : undefined}
         />
       )}
 
@@ -165,13 +172,30 @@ export default function StudentSearchPage() {
           {delistedCourses.length > 0 && (
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Delisted courses</p>
-              <p className="text-xs text-slate-400 px-1">Their attendance for these was cleared when they were delisted. Not counted in the overall rate.</p>
+              <p className="text-xs text-slate-400 px-1">
+                Their attendance for these was cleared when they were delisted. Not counted in the overall rate.
+                {isSuper && " You can add them back, but the cleared attendance doesn't return."}
+              </p>
               <div className="flex flex-wrap gap-2">
-                {delistedCourses.map((c) => (
-                  <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
-                    {c.courseCode}
-                  </span>
-                ))}
+                {delistedCourses.map((c) =>
+                  isSuper ? (
+                    <button
+                      key={c.courseId}
+                      onClick={() => setRelisting(c)}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 font-mono text-xs text-red-600 transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-brand-950/50 dark:hover:text-brand-300"
+                      title={`Add back to ${c.courseCode}`}
+                    >
+                      {c.courseCode}
+                      <span className="inline-flex items-center gap-1 font-sans font-medium">
+                        <UserPlus className="h-3 w-3" /> Add back
+                      </span>
+                    </button>
+                  ) : (
+                    <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
+                      {c.courseCode}
+                    </span>
+                  )
+                )}
               </div>
             </div>
           )}
@@ -226,6 +250,19 @@ export default function StudentSearchPage() {
           open={!!delisting}
           onClose={() => setDelisting(null)}
           course={delisting}
+          student={{ regNumber: student.regNumber, name: student.name }}
+          onDone={handleSearch}
+        />
+        <ResetDeviceSheet
+          open={resetDeviceOpen}
+          onClose={() => setResetDeviceOpen(false)}
+          student={{ regNumber: student.regNumber, name: student.name }}
+          onDone={handleSearch}
+        />
+        <RelistSheet
+          open={!!relisting}
+          onClose={() => setRelisting(null)}
+          course={relisting}
           student={{ regNumber: student.regNumber, name: student.name }}
           onDone={handleSearch}
         />

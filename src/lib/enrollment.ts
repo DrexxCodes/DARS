@@ -43,7 +43,7 @@ export async function isEligibleForCourse(courseId: string, course: CourseAudien
 export const NOT_ENROLLED_MESSAGE =
   "This course isn't on your level list. If you need it, add it as an Added Course and wait for an admin to approve.";
 
-export const DELISTED_MESSAGE = "You delisted this course, so you can't mark attendance for it.";
+export const DELISTED_MESSAGE = "You delisted this course, so you can't mark attendance for it. Ask a super admin if you need to be added back.";
 export const DELISTED_MESSAGE_FOR_ADMIN = "That student has delisted this course.";
 
 /** Reads the audience fields off a course document's data. */

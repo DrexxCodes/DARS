@@ -1,5 +1,32 @@
 # DARS Changelog
 
+## v2.8.0 — Start-class sheet, configurable duration and late cut-off, add a delisted student back, one account per device
+
+### Added
+- **Start-class sheet.** Tapping **Start Class** (super admins and scoped admins) now opens a bottom sheet with **Class name** (pre-filled "CODE · Class N", editable), **Location**, **Class duration** and **Mark students late after**. Duration and late cut-off each have a **Minutes / Hours** pill. Defaults: 2 hours, late after 90 min (the old fixed rule, so nothing changes unless an admin changes it). Flipping the pill converts the number (2 hr becomes 120 min).
+  - Rules (checked on the sheet and again in `POST /api/classes`, `src/lib/class-timing.ts`): duration 5 min to 12 hr; late cut-off at least 1 min and no longer than the class (equal to the duration = nobody is ever late).
+  - Late means `lateAfterMinutes` or more have passed since the class started, so 45 min = anyone marking at 45:00 or later is late.
+  - Stored on the session (`name`, `durationMinutes`, `lateAfterMinutes`) and on `globals/{courseId}` (`className`, `durationMinutes`, `lateAfterMinutes`, `endTime`). Cleared when the class ends or on a full reset.
+  - Class History and the Class Status card show the class name; Class Status also shows the late cut-off. The student Mark page banner shows the class name and "On time until h:mm AM".
+- **Add a delisted student back** (super admins). Student Lookup > **Delisted courses**: each course chip is now an **Add back** button that opens a confirm sheet. New route `POST /api/admin/students/[regNumber]/relist`. A course on the student's own level just loses its delisted marker; an off-level course goes straight back to `approved` (no second approval). Their earlier attendance was wiped when they delisted and is **not** restored. Activity log: `relist_course_admin`. Students who try to mark or re-add a delisted course are now told to ask a super admin.
+- **One account per device.** The first successful self-mark links the student's account to the browser it came from, and that browser to the account (`students/{REG}.boundDevice`, `deviceBindings/{didHash}`, salted hashes only).
+  - A linked account can only mark from its own browser (`403 DEVICE_MISMATCH`), and a linked browser can only mark for one account (`403 DEVICE_TAKEN`). A friend signing in as someone else in a second browser on the same phone is refused for every class, not just the current one.
+  - The browser ID is now also kept in an httpOnly cookie the server issues (`dars_did`, about 400 days), alongside the existing localStorage ID. Either one surviving is enough, so Safari clearing script storage no longer makes a student look like a new device.
+  - Student Lookup shows "Device linked · date" and, for **super admins**, a **Reset** button (`DELETE /api/admin/students/[regNumber]/device`, activity log `reset_device`) for new phones, cleared browser data, or moving between the browser and the installed app.
+  - Admin "mark for another student" is unaffected.
+
+### Changed
+- Check-in expiry now follows each class's own end time (`isClassExpired(startTime, endTime)`) in `/api/mark`, the mark banner and the live-class lookup. Classes that don't carry one (started before this version) still run 2 hours.
+- `POST /api/mark` reads the browser's link doc instead of the old per-class `d_<deviceId>` claim, so reads per mark are the same and writes drop by one. The per-class "same phone model + same network" claim (`p_<fingerprint>_<ip>`) stays, and its cleanup date now follows the class's end time.
+- Device fingerprint no longer includes browser language or `deviceMemory`: both differ between browsers on the same phone (Firefox and Safari don't report `deviceMemory`), which let a second browser look like a different phone. Fingerprints only live per class, so no migration.
+- `GET /api/admin/students/[regNumber]` no longer returns the raw `boundDevice` hashes; it returns `deviceLinked` and `deviceLinkedAt`.
+- `GET /api/mark/status` also returns `endTime`, `className` and `lateAfterMinutes`.
+
+### Setup
+- No new packages. No new Firestore indexes. No migration: existing students are simply "not linked yet" and link on their next mark.
+- Make sure your Firestore rules deny client access to the new `deviceBindings` collection (the Admin SDK in the API routes doesn't need rules).
+- A student who marks from Safari and later installs the app on iOS (separate storage and cookies) will be asked to have their device reset once. Telling students to install the app before their first mark avoids it.
+
 ## v2.7.0 — Delist a course, "Added Course" wording, in-progress classes aren't misses, mobile fixes
 
 ### Added

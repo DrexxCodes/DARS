@@ -174,6 +174,9 @@ export default function MarkPage() {
                     classActive={selectedGlobal.classActive}
                     checkinPaused={selectedGlobal.checkinPaused}
                     startTime={selectedGlobal.startTime}
+                    endTime={selectedGlobal.endTime}
+                    classTitle={selectedGlobal.className}
+                    lateAfterMinutes={selectedGlobal.lateAfterMinutes}
                     onExpired={handleExpired}
                   />
                 </div>

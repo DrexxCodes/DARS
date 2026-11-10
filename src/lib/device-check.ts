@@ -7,9 +7,9 @@ const SALT = process.env.DEVICE_HASH_SALT || "dars-device-salt";
 const HEX_64 = /^[a-f0-9]{64}$/;
 const DEVICE_ID = /^[A-Za-z0-9-]{16,64}$/;
 
-/** Claims stay for the class length (2h) plus this, then Firestore TTL removes them. Kept a day for admin audits. */
+/** Claims stay until the class ends plus this, then Firestore TTL removes them. Kept a day for admin audits. */
 const RETENTION_AFTER_CLASS_MS = 24 * 60 * 60 * 1000;
-const CLASS_LENGTH_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_CLASS_LENGTH_MS = 2 * 60 * 60 * 1000;
 
 export const DEVICE_CONFLICT = {
   error: "Couldn't mark this attendance. Something looks sketchy.",
@@ -21,7 +21,7 @@ export const SIGNALS_REQUIRED = {
   code: "SIGNALS_REQUIRED",
 } as const;
 
-function hash(value: string): string {
+export function hash(value: string): string {
   return createHash("sha256").update(SALT).update(value).digest("hex").slice(0, 32);
 }
 
@@ -42,40 +42,43 @@ interface ClaimInput {
   courseId: string;
   classId: string;
   startTime: number;
+  /** When the class ends. Missing on classes started before durations were configurable (2 h). */
+  endTime?: number | null;
   regNumber: string;
   ip: string;
-  signals: DeviceSignals;
+  fingerprint: string;
 }
 
 export interface DeviceClaims {
-  refs: [DocumentReference, DocumentReference];
+  refs: DocumentReference[];
   data: Record<string, unknown>;
 }
 
 /**
- * Two deterministic claim docs per mark, under the class session (so different courses never collide):
- *   d_<deviceId>        same browser profile already marked this class
- *   p_<fingerprint>_<ip> same phone model on the same network already marked (incognito, other browser, installed app vs Safari)
+ * One deterministic claim doc per mark, under the class session (so different courses never collide):
+ *   p_<fingerprint>_<ip>  same phone model on the same network already marked this class (other browser, incognito, installed app vs Safari)
  * Same IP alone is fine (hotspots/CGNAT), and same fingerprint alone is fine (identical phone models on different networks).
  * Deterministic IDs + create() make the check atomic with the attendance write.
+ *
+ * The old per-class browser-ID claim (`d_<deviceId>`) is gone: a device is now linked to ONE account for good
+ * (see device-binding.ts), which covers "same browser, two accounts" for every class, not just this one.
  */
 export function buildDeviceClaims(input: ClaimInput): DeviceClaims {
-  const { courseId, classId, startTime, regNumber, ip, signals } = input;
+  const { courseId, classId, startTime, endTime, regNumber, ip, fingerprint } = input;
   const col = db.collection("classes").doc(courseId).collection("sessions").doc(classId).collection("claims");
-  const fp = hash(signals.fingerprint);
-  const did = hash(signals.deviceId);
+  const fp = hash(fingerprint);
   const ipHash = hash(ip);
+  const end = typeof endTime === "number" && endTime > startTime ? endTime : startTime + DEFAULT_CLASS_LENGTH_MS;
   return {
-    refs: [col.doc(`d_${did}`), col.doc(`p_${fp}_${ipHash}`)],
+    refs: [col.doc(`p_${fp}_${ipHash}`)],
     data: {
       regNumber,
       courseId,
       classId,
       fp,
-      did,
       ip: ipHash,
       ts: Date.now(),
-      expiresAt: Timestamp.fromMillis(startTime + CLASS_LENGTH_MS + RETENTION_AFTER_CLASS_MS),
+      expiresAt: Timestamp.fromMillis(end + RETENTION_AFTER_CLASS_MS),
     },
   };
 }

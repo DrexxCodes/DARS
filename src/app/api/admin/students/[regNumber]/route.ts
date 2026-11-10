@@ -48,7 +48,13 @@ export async function GET(
 
     const studentDoc = await db.collection("students").doc(regNumber).get();
     if (!studentDoc.exists) return NextResponse.json({ error: "Student not found" }, { status: 404 });
-    const student = studentDoc.data()!;
+    // The device link is stored as hashes; admins only need to know whether there is one and since when.
+    const { boundDevice, ...studentData } = studentDoc.data()!;
+    const student = {
+      ...studentData,
+      deviceLinked: typeof boundDevice?.did === "string",
+      deviceLinkedAt: typeof boundDevice?.boundAt === "number" ? (boundDevice.boundAt as number) : null,
+    };
 
     if (courseId) {
       const recordsSnap = await db

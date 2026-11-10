@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       for (const course of coursesSnap.docs.slice(i, i + 200)) {
         batch.set(
           db.collection("globals").doc(course.id),
-          { classActive: false, checkinPaused: false, currentClassId: null, startTime: null, endTime: null },
+          { classActive: false, checkinPaused: false, currentClassId: null, startTime: null, endTime: null, className: null, durationMinutes: null, lateAfterMinutes: null },
           { merge: true }
         );
         batch.update(course.ref, { totalClasses: 0 });

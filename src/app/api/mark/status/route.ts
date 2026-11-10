@@ -40,6 +40,9 @@ export async function GET() {
             classActive: !!g.classActive,
             checkinPaused: !!g.checkinPaused,
             startTime: typeof g.startTime === "number" ? g.startTime : null,
+            endTime: typeof g.endTime === "number" ? g.endTime : null,
+            className: typeof g.className === "string" ? g.className : null,
+            lateAfterMinutes: typeof g.lateAfterMinutes === "number" ? g.lateAfterMinutes : null,
           };
         });
 

@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { format } from "date-fns";
+import { CLASS_DEFAULTS } from "@/constants/class";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -96,21 +97,29 @@ export function getAttendanceStatus(percentage: number, total: number): Attendan
   };
 }
 
-export function isClassExpired(startTime: number): boolean {
-  const TWO_HOURS = 2 * 60 * 60 * 1000;
-  return Date.now() - startTime >= TWO_HOURS;
+const DEFAULT_CLASS_MS = CLASS_DEFAULTS.DURATION_MIN * 60_000;
+const DEFAULT_LATE_MS = CLASS_DEFAULTS.LATE_AFTER_MIN * 60_000;
+
+/** When check-in closes. Uses the class's own end time; classes started before it was configurable fall back to 2 hours. */
+function classEnd(startTime: number, endTime?: number | null): number {
+  return typeof endTime === "number" && endTime > startTime ? endTime : startTime + DEFAULT_CLASS_MS;
 }
 
-export function isLateAttendance(startTime: number): boolean {
-  const NINETY_MIN = 90 * 60 * 1000;
-  return Date.now() - startTime >= NINETY_MIN;
+export function isClassExpired(startTime: number, endTime?: number | null): boolean {
+  return Date.now() >= classEnd(startTime, endTime);
 }
 
-export function getRemainingTime(startTime: number): string {
-  const TWO_HOURS = 2 * 60 * 60 * 1000;
-  const remaining = TWO_HOURS - (Date.now() - startTime);
+/** Late once `lateAfterMinutes` have passed since the class started (90 when the class doesn't carry its own). */
+export function isLateAttendance(startTime: number, lateAfterMinutes?: number | null): boolean {
+  const lateMs = typeof lateAfterMinutes === "number" && lateAfterMinutes > 0 ? lateAfterMinutes * 60_000 : DEFAULT_LATE_MS;
+  return Date.now() - startTime >= lateMs;
+}
+
+export function getRemainingTime(startTime: number, endTime?: number | null): string {
+  const remaining = classEnd(startTime, endTime) - Date.now();
   if (remaining <= 0) return "Ended";
-  const mins = Math.floor(remaining / 60000);
-  const secs = Math.floor((remaining % 60000) / 1000);
-  return `${mins}m ${secs}s`;
+  const hours = Math.floor(remaining / 3_600_000);
+  const mins = Math.floor((remaining % 3_600_000) / 60_000);
+  const secs = Math.floor((remaining % 60_000) / 1000);
+  return hours > 0 ? `${hours}h ${mins}m ${secs}s` : `${mins}m ${secs}s`;
 }

@@ -15,6 +15,12 @@ export interface GlobalState {
   classActive: boolean;
   checkinPaused: boolean;
   startTime: number | null;
+  /** When check-in closes. Missing on classes started before durations were configurable (they run 2 h). */
+  endTime?: number | null;
+  /** The name the admin gave this class when starting it. */
+  className?: string | null;
+  /** Minutes after the start when marking turns "late". */
+  lateAfterMinutes?: number | null;
   currentDate?: string;
 }
 

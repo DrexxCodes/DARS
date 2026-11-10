@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getRemainingTime, isClassExpired } from "@/lib/utils";
+import { formatTime, getRemainingTime, isClassExpired } from "@/lib/utils";
 import { Clock, PauseCircle, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -9,6 +9,10 @@ interface ClassStatusBannerProps {
   classActive: boolean;
   checkinPaused: boolean;
   startTime: number | null;
+  /** When check-in closes. Leave out for a class that predates configurable durations (2 h). */
+  endTime?: number | null;
+  classTitle?: string | null;
+  lateAfterMinutes?: number | null;
   onExpired: () => void;
 }
 
@@ -16,6 +20,9 @@ export default function ClassStatusBanner({
   classActive,
   checkinPaused,
   startTime,
+  endTime,
+  classTitle,
+  lateAfterMinutes,
   onExpired,
 }: ClassStatusBannerProps) {
   const [remaining, setRemaining] = useState("");
@@ -24,17 +31,17 @@ export default function ClassStatusBanner({
     if (!classActive || !startTime) return;
 
     const tick = () => {
-      if (isClassExpired(startTime)) {
+      if (isClassExpired(startTime, endTime)) {
         onExpired();
         return;
       }
-      setRemaining(getRemainingTime(startTime));
+      setRemaining(getRemainingTime(startTime, endTime));
     };
 
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [classActive, startTime, onExpired]);
+  }, [classActive, startTime, endTime, onExpired]);
 
   if (!classActive) return null;
 
@@ -47,17 +54,24 @@ export default function ClassStatusBanner({
     );
   }
 
+  // "On time until 9:45 AM": only worth saying while that moment is still ahead
+  const lateAt = startTime && lateAfterMinutes ? startTime + lateAfterMinutes * 60_000 : null;
+  const onTimeUntil = lateAt && Date.now() < lateAt && (!endTime || lateAt < endTime) ? formatTime(lateAt) : null;
+
   return (
     <div className={cn(
       "flex items-center justify-between gap-2 px-4 py-3 rounded-xl text-sm font-medium",
       "bg-brand-50 dark:bg-brand-950 border border-brand-200 dark:border-brand-800 text-brand-700 dark:text-brand-300"
     )}>
-      <span className="flex items-center gap-2">
-        <CheckCircle2 className="w-4 h-4 shrink-0" />
-        Class is active — check-in open
+      <span className="flex min-w-0 flex-col">
+        <span className="flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span className="truncate">{classTitle ? classTitle : "Class is active — check-in open"}</span>
+        </span>
+        {onTimeUntil && <span className="ml-6 text-xs font-normal opacity-80">On time until {onTimeUntil}</span>}
       </span>
       {startTime && (
-        <span className="flex items-center gap-1.5 font-mono text-xs bg-brand-100 dark:bg-brand-900 px-2.5 py-1 rounded-full">
+        <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs bg-brand-100 dark:bg-brand-900 px-2.5 py-1 rounded-full">
           <Clock className="w-3 h-3" />
           {remaining} left
         </span>

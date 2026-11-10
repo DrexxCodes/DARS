@@ -7,10 +7,12 @@ import { Card, Button, Input, Badge, Skeleton, Select, Dialog } from "@/componen
 import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
 import { formatTime } from "@/lib/utils";
+import { formatMinutes } from "@/lib/class-timing";
 import LevelPicker from "@/components/admin/LevelPicker";
 import DepartmentPicker from "@/components/admin/DepartmentPicker";
 import AdmissionTypePicker from "@/components/admin/AdmissionTypePicker";
 import ExportAttendanceCard from "@/components/admin/ExportAttendanceCard";
+import StartClassSheet, { type StartClassValues } from "@/components/admin/StartClassSheet";
 import CarryoverRequestsCard from "@/components/admin/CarryoverRequestsCard";
 import { levelLabel, departmentLabel, admissionTypeLabel } from "@/constants/academics";
 import {
@@ -24,11 +26,13 @@ interface GlobalState {
   startTime: number | null; endTime: number | null;
   currentClassId: string | null;
   locationId?: string; locationName?: string;
+  className?: string | null; lateAfterMinutes?: number | null;
 }
 interface Session {
   id: string; classId: string; date: string;
   totalPresence: number; startTime: number; endTime: number;
   startedBy: string; locationName?: string;
+  name?: string | null; lateAfterMinutes?: number | null;
 }
 interface ActivityLog { id: string; action: string; courseId: string; adminName: string; timestamp: number; }
 interface LocationTag { id: string; name: string; isPrimary: boolean; }
@@ -57,6 +61,7 @@ export default function AdminCreatePage() {
   // Locations
   const [locations, setLocations] = useState<LocationTag[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState("");
+  const [startSheetOpen, setStartSheetOpen] = useState(false);
 
   // Delete course dialog
   const [showDeleteCourseDialog, setShowDeleteCourseDialog] = useState(false);
@@ -125,12 +130,8 @@ export default function AdminCreatePage() {
     return () => clearInterval(interval);
   }, [globalState?.classActive, selectedCourse, fetchCourseState]);
 
-  const doAction = async (action: "start" | "end" | "pause" | "resume") => {
+  const doAction = async (action: "start" | "end" | "pause" | "resume", start?: StartClassValues) => {
     if (!selectedCourse) return;
-    if (action === "start" && !selectedLocationId) {
-      toast.error("Select a location for this class first.");
-      return;
-    }
     setActionLoading(action);
     try {
       const token = await getToken();
@@ -140,7 +141,7 @@ export default function AdminCreatePage() {
         body: JSON.stringify({
           action,
           courseId: selectedCourse,
-          ...(action === "start" ? { locationId: selectedLocationId } : {}),
+          ...(action === "start" && start ? start : {}),
         }),
       });
       const data = await res.json();
@@ -151,6 +152,7 @@ export default function AdminCreatePage() {
         pause: "Check-in paused.",
         resume: "Check-in resumed.",
       }[action]);
+      if (action === "start") setStartSheetOpen(false);
       fetchCourseState(selectedCourse);
     } catch { toast.error("Action failed."); } finally { setActionLoading(null); }
   };
@@ -375,11 +377,13 @@ export default function AdminCreatePage() {
                   <div className="flex-1">
                     <p className="font-semibold text-slate-900 dark:text-white text-sm">
                       {isActive && !isPaused ? "Class Active" : isPaused ? "Check-in Paused" : "No Active Class"}
+                      {isActive && globalState?.className && <span className="font-normal text-slate-500"> · {globalState.className}</span>}
                     </p>
                     {isActive && globalState?.startTime && (
                       <p className="text-xs text-slate-500 mt-0.5">
                         Started at {formatTime(globalState.startTime)} · Ends at {formatTime(globalState.endTime!)}
                         {globalState?.locationName && <> · <MapPin className="w-3 h-3 inline -mt-0.5" /> {globalState.locationName}</>}
+                        {globalState?.lateAfterMinutes ? <> · Late after {formatMinutes(globalState.lateAfterMinutes)}</> : null}
                       </p>
                     )}
                   </div>
@@ -390,25 +394,14 @@ export default function AdminCreatePage() {
                   )}
                 </div>
 
-                {/* Location picker */}
-                {!isActive && (
-                  <div className="mb-5">
-                    {locations.length === 0 ? (
-                      <div className="flex items-start gap-2 text-left bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 text-sm p-3 rounded-lg">
-                        <MapPin className="w-4 h-4 mt-0.5 shrink-0" />
-                        <span>
-                          No location tags exist yet. Create one on the{" "}
-                          <a href="/admin/tags" className="underline font-medium">Tags page</a> before starting a class.
-                        </span>
-                      </div>
-                    ) : (
-                      <Select
-                        label="Class Location"
-                        value={selectedLocationId}
-                        onChange={(e) => setSelectedLocationId(e.target.value)}
-                        options={locations.map((l) => ({ value: l.id, label: l.isPrimary ? `${l.name} (Primary)` : l.name }))}
-                      />
-                    )}
+                {/* No tags yet: the sheet can't be used, so say why up front */}
+                {!isActive && locations.length === 0 && (
+                  <div className="mb-5 flex items-start gap-2 text-left bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 text-sm p-3 rounded-lg">
+                    <MapPin className="w-4 h-4 mt-0.5 shrink-0" />
+                    <span>
+                      No location tags exist yet. Create one on the{" "}
+                      <a href="/admin/tags" className="underline font-medium">Tags page</a> before starting a class.
+                    </span>
                   </div>
                 )}
 
@@ -417,7 +410,7 @@ export default function AdminCreatePage() {
                   {!isActive && (
                     <Button icon={<PlayCircle className="w-4 h-4" />}
                       loading={actionLoading === "start"} disabled={!locations.length}
-                      onClick={() => doAction("start")}>
+                      onClick={() => setStartSheetOpen(true)}>
                       Start Class
                     </Button>
                   )}
@@ -460,7 +453,7 @@ export default function AdminCreatePage() {
                     <div className="flex items-center gap-2.5">
                       <Clock className="w-4 h-4 text-slate-400" />
                       <div>
-                        <p className="font-medium text-slate-900 dark:text-white">{s.date}</p>
+                        <p className="font-medium text-slate-900 dark:text-white">{s.name ? `${s.name} · ${s.date}` : s.date}</p>
                         <p className="text-xs text-slate-400">
                           {formatTime(s.startTime)} – {formatTime(s.endTime)}
                           {s.locationName && <> · {s.locationName}</>}
@@ -525,6 +518,17 @@ export default function AdminCreatePage() {
           </Card>
         </>
       )}
+
+      <StartClassSheet
+        open={startSheetOpen}
+        onClose={() => setStartSheetOpen(false)}
+        course={selectedCourseData ? { code: selectedCourseData.code, name: selectedCourseData.name } : null}
+        locations={locations}
+        defaultLocationId={selectedLocationId}
+        suggestedName={selectedCourseData ? `${selectedCourseData.code} · Class ${sessions.length + 1}` : ""}
+        starting={actionLoading === "start"}
+        onStart={(values) => { setSelectedLocationId(values.locationId); doAction("start", values); }}
+      />
 
       {/* Delete COURSE dialog */}
       <Dialog

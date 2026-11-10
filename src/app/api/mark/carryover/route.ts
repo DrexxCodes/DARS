@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
       return "created" as const;
     });
 
-    if (outcome === "delisted") return NextResponse.json({ error: "You delisted this course, so it can't be added again." }, { status: 409 });
+    if (outcome === "delisted") return NextResponse.json({ error: "You delisted this course, so it can't be added again. Ask a super admin to add you back." }, { status: 409 });
     if (outcome === "approved") return NextResponse.json({ error: "You've already added this course." }, { status: 409 });
     if (outcome === "pending") return NextResponse.json({ error: "You've already asked to add this course. Waiting for approval." }, { status: 409 });
     return NextResponse.json({ success: true }, { status: 201 });

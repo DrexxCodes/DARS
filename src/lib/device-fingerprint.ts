@@ -49,15 +49,16 @@ function gpuInfo(): string {
 }
 
 /**
- * Only traits that stay the same between a normal tab, a private tab and the installed app.
+ * Only traits that stay the same between a normal tab, a private tab, the installed app AND other browsers on the same phone.
  * Canvas/audio hashes and window size are left out on purpose: Safari adds noise to canvas in private mode and
  * the window size changes between standalone and browser, either of which would let incognito slip through.
+ * Browser language and `deviceMemory` are left out too: each browser has its own language setting, and Firefox/Safari don't
+ * report `deviceMemory` at all, so keeping them made Chrome and Firefox on one phone look like two different phones.
  */
 async function computeFingerprint(): Promise<string> {
-  const nav = navigator as Navigator & { deviceMemory?: number };
+  const nav = navigator;
   const traits = [
     nav.platform,
-    nav.languages?.[0] ?? nav.language,
     Intl.DateTimeFormat().resolvedOptions().timeZone,
     Math.max(screen.width, screen.height),
     Math.min(screen.width, screen.height),
@@ -65,7 +66,6 @@ async function computeFingerprint(): Promise<string> {
     window.devicePixelRatio,
     nav.hardwareConcurrency,
     nav.maxTouchPoints,
-    nav.deviceMemory ?? "",
     gpuInfo(),
   ];
   return sha256Hex(traits.join("||"));

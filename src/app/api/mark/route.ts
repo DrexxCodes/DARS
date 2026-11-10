@@ -11,6 +11,7 @@ import { audienceOf, DELISTED_MESSAGE, DELISTED_MESSAGE_FOR_ADMIN, enrollmentRef
 import { ttlCache } from "@/lib/ttl-cache";
 import { LOCATION_LIMITS } from "@/constants/location";
 import { DEVICE_CONFLICT, SIGNALS_REQUIRED, buildDeviceClaims, getClientIp, parseDeviceSignals } from "@/lib/device-check";
+import { bindingRef, decideBinding, hashDeviceId, resolveDeviceId, setDeviceCookie } from "@/lib/device-binding";
 
 interface LocationTag { name: string; lat: number; lng: number; radiusMeters: number }
 
@@ -101,28 +102,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(SIGNALS_REQUIRED, { status: 400 });
     }
 
-    if (!globalDoc.exists) return NextResponse.json({ error: "Course not found or no active class.", code: "CLASS_INACTIVE" }, { status: 404 });
+    // The browser's ID: the server's cookie if it has one, else the ID the app sent. A browser with no cookie yet gets
+    // one on whatever response goes back, so clearing localStorage alone can't make it look like a new device.
+    const device = signals ? resolveDeviceId(req, signals.deviceId) : null;
+    const deviceHash = device ? hashDeviceId(device.deviceId) : null;
+    const reply = (body: unknown, init?: { status?: number }) => {
+      const res = NextResponse.json(body, init);
+      if (device?.issueCookie) setDeviceCookie(res, device.deviceId);
+      return res;
+    };
+
+    if (!globalDoc.exists) return reply({ error: "Course not found or no active class.", code: "CLASS_INACTIVE" }, { status: 404 });
     const global = globalDoc.data()!;
 
     if (!global.classActive) {
-      return NextResponse.json({ error: "No class is currently active for this course.", code: "CLASS_INACTIVE" }, { status: 400 });
+      return reply({ error: "No class is currently active for this course.", code: "CLASS_INACTIVE" }, { status: 400 });
     }
     if (global.checkinPaused) {
-      return NextResponse.json({ error: "Check-in is currently paused. Please wait.", code: "PAUSED" }, { status: 400 });
+      return reply({ error: "Check-in is currently paused. Please wait.", code: "PAUSED" }, { status: 400 });
     }
-    if (isClassExpired(global.startTime)) {
-      return NextResponse.json({ error: "The class has ended. Check-in is no longer available.", code: "CLASS_ENDED" }, { status: 400 });
+    if (isClassExpired(global.startTime, global.endTime)) {
+      return reply({ error: "The class has ended. Check-in is no longer available.", code: "CLASS_ENDED" }, { status: 400 });
     }
 
     // The active class's unique ID lives on the globals doc
     const classId: string = global.currentClassId;
     if (!classId) {
-      return NextResponse.json({ error: "No active class session found.", code: "CLASS_INACTIVE" }, { status: 400 });
+      return reply({ error: "No active class session found.", code: "CLASS_INACTIVE" }, { status: 400 });
     }
 
     // Location check — FAILS CLOSED: a class with no usable location can't be marked.
     if (!global.locationId) {
-      return NextResponse.json(
+      return reply(
         { error: "This class has no location set. Ask your lecturer to restart it.", code: "LOCATION_NOT_CONFIGURED" },
         { status: 400 }
       );
@@ -132,10 +143,10 @@ export async function POST(req: NextRequest) {
       Number.isFinite(lat) && Number.isFinite(lng) &&
       Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
     if (!validCoords) {
-      return NextResponse.json({ error: "Location access is required to mark attendance.", code: "LOCATION_REQUIRED" }, { status: 400 });
+      return reply({ error: "Location access is required to mark attendance.", code: "LOCATION_REQUIRED" }, { status: 400 });
     }
     const lowAccuracyResponse = () =>
-      NextResponse.json(
+      reply(
         { error: "Your location signal is too weak/imprecise. Turn on GPS (high accuracy), step outside or near a window, and try again.", code: "LOW_ACCURACY" },
         { status: 400 }
       );
@@ -147,13 +158,14 @@ export async function POST(req: NextRequest) {
     const studentRef = db.collection("students").doc(normalized);
     const attendanceRef = studentRef.collection("attendance").doc(courseId).collection("records").doc(classId);
     const claims = signals
-      ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, regNumber: normalized, ip, signals })
+      ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, endTime: global.endTime, regNumber: normalized, ip, fingerprint: signals.fingerprint })
       : null;
 
-    const [studentDoc, existingMark, claimSnaps, location, enrolDoc] = await Promise.all([
+    const [studentDoc, existingMark, claimSnaps, bindingSnap, location, enrolDoc] = await Promise.all([
       studentRef.get(),
       attendanceRef.get(),
       claims ? db.getAll(...claims.refs) : Promise.resolve([]),
+      deviceHash ? bindingRef(deviceHash).get() : Promise.resolve(null),
       loadLocation(global.locationId),
       enrollmentRef(courseId, normalized).get(),
     ]);
@@ -161,17 +173,17 @@ export async function POST(req: NextRequest) {
     // Applies to an admin marking for another student too, so a course's records only ever hold students who take it.
     const enrolStatus = enrolDoc.exists ? (enrolDoc.data()?.status as string | undefined) : undefined;
     if (enrolStatus === "delisted") {
-      return NextResponse.json({ error: targetRegNumber ? DELISTED_MESSAGE_FOR_ADMIN : DELISTED_MESSAGE, code: "DELISTED" }, { status: 403 });
+      return reply({ error: targetRegNumber ? DELISTED_MESSAGE_FOR_ADMIN : DELISTED_MESSAGE, code: "DELISTED" }, { status: 403 });
     }
     if (!isEnrolled(onLevel, enrolStatus)) {
-      return NextResponse.json(
+      return reply(
         { error: targetRegNumber ? "That student isn't in this course's level and has no approved Added Course." : NOT_ENROLLED_MESSAGE, code: "WRONG_LEVEL" },
         { status: 403 }
       );
     }
 
     if (!location) {
-      return NextResponse.json(
+      return reply(
         { error: "This class's location tag no longer exists. Ask your lecturer to restart the class.", code: "LOCATION_NOT_CONFIGURED" },
         { status: 400 }
       );
@@ -185,7 +197,7 @@ export async function POST(req: NextRequest) {
     if (!preciseEnough && !provablyInside) {
       // A weak fix is only trusted when this class's range covers the whole uncertainty circle. Say exactly why it doesn't.
       const acc = Math.round(accuracy);
-      return NextResponse.json(
+      return reply(
         {
           error: `Your location is only accurate to ±${acc} m, which this class's ${location.radiusMeters} m range can't cover yet, so DARS can't confirm you're inside. Wait a few seconds for the signal to improve (near a window helps) and tap again.`,
           code: "LOW_ACCURACY",
@@ -196,22 +208,22 @@ export async function POST(req: NextRequest) {
       );
     }
     if (distance > location.radiusMeters) {
-      return NextResponse.json(
+      return reply(
         { error: `You must be at ${location.name} to mark attendance.`, code: "OUT_OF_RANGE" },
         { status: 403 }
       );
     }
 
     // Student exists?
-    if (!studentDoc.exists) return NextResponse.json({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
+    if (!studentDoc.exists) return reply({ error: "NOT_FOUND", code: "NOT_FOUND" }, { status: 404 });
     const student = studentDoc.data()!;
 
     // Ban checks (the linked account's doc is already in hand for self-marks)
-    if (student.banned) return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
+    if (student.banned) return reply({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
     if (student.uid) {
       const accountDoc = student.uid === callerUid ? callerDoc : await db.collection("users").doc(student.uid).get();
       if (accountDoc.exists && accountDoc.data()?.banned) {
-        return NextResponse.json({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
+        return reply({ error: "Your attendance has been suspended.", code: "BANNED" }, { status: 403 });
       }
     }
 
@@ -219,13 +231,29 @@ export async function POST(req: NextRequest) {
     // whose first response was lost can still show success.
     if (existingMark.exists) {
       const m = existingMark.data()!;
-      return NextResponse.json(
+      return reply(
         { error: "You have already marked attendance for this class.", code: "DUPLICATE", name: student.name, late: !!m.late, timestamp: m.timestamp },
         { status: 409 }
       );
     }
 
-    // Device check — same browser profile, or same phone model on the same network, already marked this class
+    // Device link — an account only marks from the browser it's linked to, and a browser only marks for one account.
+    // The first successful mark creates the link (in the same batch as the attendance record, below).
+    const binding = deviceHash
+      ? decideBinding({
+          regNumber: normalized,
+          deviceHash,
+          studentDeviceHash: typeof student.boundDevice?.did === "string" ? student.boundDevice.did : null,
+          bindingOwner: bindingSnap?.exists ? String(bindingSnap.data()?.regNumber ?? "") || null : null,
+        })
+      : null;
+    if (binding && !binding.ok) {
+      console.warn("[device-link]", { classId, courseId, attempted: normalized, code: binding.response.code });
+      return reply(binding.response, { status: 403 });
+    }
+
+    // Device check — same phone model on the same network already marked this class (catches other browsers on one phone
+    // for accounts that aren't linked yet)
     const conflicts = claimSnaps.filter((snap) => snap.exists);
     if (conflicts.length > 0) {
       console.warn("[device-conflict]", {
@@ -234,11 +262,11 @@ export async function POST(req: NextRequest) {
         attempted: normalized,
         alreadyMarkedBy: conflicts.map((snap) => snap.data()?.regNumber),
       });
-      return NextResponse.json(DEVICE_CONFLICT, { status: 403 });
+      return reply(DEVICE_CONFLICT, { status: 403 });
     }
 
     const now = Date.now();
-    const late = isLateAttendance(global.startTime);
+    const late = isLateAttendance(global.startTime, global.lateAfterMinutes);
 
     // Atomic write
     const batch = db.batch();
@@ -258,8 +286,17 @@ export async function POST(req: NextRequest) {
     const sessionRef = db.collection("classes").doc(courseId).collection("sessions").doc(classId);
     batch.update(sessionRef, { totalPresence: FieldValue.increment(1) });
 
-    // Increment on student record
-    batch.update(studentRef, { totalPresence: FieldValue.increment(1) });
+    // Increment on student record (and link the device on a student's first mark)
+    batch.update(studentRef, {
+      totalPresence: FieldValue.increment(1),
+      ...(binding?.ok && binding.bindNow && deviceHash ? { boundDevice: { did: deviceHash, boundAt: now } } : {}),
+    });
+    if (binding?.ok && binding.bindNow && deviceHash) {
+      const link = { regNumber: normalized, boundAt: now };
+      // create() so two accounts racing to link the same browser can't both win
+      if (binding.overwrite) batch.set(bindingRef(deviceHash), link);
+      else batch.create(bindingRef(deviceHash), link);
+    }
 
     // Device claims (create() fails if a racing request already took either one)
     if (claims) {
@@ -274,17 +311,17 @@ export async function POST(req: NextRequest) {
         const raced = await attendanceRef.get();
         if (raced.exists) {
           const m = raced.data()!;
-          return NextResponse.json(
+          return reply(
             { error: "You have already marked attendance for this class.", code: "DUPLICATE", name: student.name, late: !!m.late, timestamp: m.timestamp },
             { status: 409 }
           );
         }
-        return NextResponse.json(DEVICE_CONFLICT, { status: 403 });
+        return reply(DEVICE_CONFLICT, { status: 403 });
       }
       throw e;
     }
 
-    return NextResponse.json({ success: true, name: student.name, late, timestamp: now });
+    return reply({ success: true, name: student.name, late, timestamp: now });
   } catch (error) {
     console.error("Mark attendance error:", error);
     return NextResponse.json({ error: "Failed to mark attendance. Please try again." }, { status: 500 });

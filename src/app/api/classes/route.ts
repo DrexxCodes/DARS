@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { cleanClassName, parseClassTiming } from "@/lib/class-timing";
 
 interface AdminUser {
   uid: string;
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { action, courseId, locationId } = await req.json();
+    const { action, courseId, locationId, name, durationMinutes: durationInput, lateAfterMinutes: lateInput } = await req.json();
 
     if (adminUser.scope === "defined") {
       const courseDoc = await db.collection("courses").doc(courseId).get();
@@ -48,6 +49,11 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
 
     if (action === "start") {
+      const timing = parseClassTiming(durationInput, lateInput);
+      if (!timing.ok) return NextResponse.json({ error: timing.error }, { status: 400 });
+      const { durationMinutes, lateAfterMinutes } = timing;
+      const className = cleanClassName(name) || null;
+
       const globalDoc = await globalRef.get();
       if (globalDoc.data()?.classActive) {
         return NextResponse.json({ error: "A class is already active for this course." }, { status: 400 });
@@ -73,7 +79,7 @@ export async function POST(req: NextRequest) {
       }
       const location = locationDoc.data()!;
 
-      const endTime = now + 2 * 60 * 60 * 1000;
+      const endTime = now + durationMinutes * 60_000;
 
       // Auto-generate a unique class ID (so same course can run multiple days)
       const sessionRef = db.collection("classes").doc(courseId).collection("sessions").doc();
@@ -88,6 +94,9 @@ export async function POST(req: NextRequest) {
         totalPresence: 0,
         startedBy: adminUser.uid,
         createdAt: now,
+        name: className,
+        durationMinutes,
+        lateAfterMinutes,
         locationId: locationDoc.id,
         locationName: location.name,
       });
@@ -104,6 +113,9 @@ export async function POST(req: NextRequest) {
         currentClassId: classId,
         startTime: now,
         endTime,
+        className,
+        durationMinutes,
+        lateAfterMinutes,
         locationId: locationDoc.id,
         locationName: location.name,
       });
@@ -112,12 +124,13 @@ export async function POST(req: NextRequest) {
         action: "start_class",
         courseId,
         classId,
+        className,
         adminUid: adminUser.uid,
         adminName: adminUser.name,
         timestamp: now,
       });
 
-      return NextResponse.json({ success: true, classId, startTime: now, endTime, locationName: location.name });
+      return NextResponse.json({ success: true, classId, startTime: now, endTime, locationName: location.name, className });
 
     } else if (action === "end") {
       await globalRef.update({
@@ -126,6 +139,9 @@ export async function POST(req: NextRequest) {
         currentClassId: null,
         startTime: null,
         endTime: null,
+        className: null,
+        durationMinutes: null,
+        lateAfterMinutes: null,
       });
 
       await db.collection("activityLog").add({
