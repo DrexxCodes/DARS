@@ -3,35 +3,25 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { Card, Button, Badge, Input, Select, Skeleton } from "@/components/ui";
-import { clientAuth } from "@/lib/firebase-client";
+import { Card, Button, Badge, Input, Skeleton } from "@/components/ui";
+import ConfirmJobSheet from "@/components/ui/ConfirmJobSheet";
+import AdminRoleSheet, { type AdminRecord, type CourseLite } from "@/components/admin/AdminRoleSheet";
+import { adminFetch } from "@/lib/admin-api";
 import { toast } from "sonner";
-import { UserCog, Mail, BookOpen, Shield, ShieldOff, Lock } from "lucide-react";
+import { UserCog, BookOpen, ShieldOff, Lock, Mail } from "lucide-react";
 import { useExportVisibility } from "@/hooks/useExportVisibility";
 import ExportVisibilityToggle from "@/components/admin/ExportVisibilityToggle";
-
-interface AdminRecord {
-  uid: string;
-  name: string;
-  email: string;
-  scope?: "super" | "defined";
-  assignedCourses?: string[];
-  regNumber?: string;
-  excludeFromExports?: boolean;
-}
-interface Course { id: string; name: string; code: string; assignedAdmins?: string[]; }
+import { scopeDef } from "@/constants/scopes";
 
 export default function AdminManagePage() {
   const { profile, loading: authLoading, refreshProfile } = useAuth();
   const router = useRouter();
 
   const [admins, setAdmins] = useState<AdminRecord[]>([]);
-  const [courses, setCourses] = useState<Course[]>([]);
+  const [courses, setCourses] = useState<CourseLite[]>([]);
   const [loadingAdmins, setLoadingAdmins] = useState(true);
-  const [editingUid, setEditingUid] = useState<string | null>(null);
-  const [editScope, setEditScope] = useState<"super" | "defined">("defined");
-  const [editCourses, setEditCourses] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<AdminRecord | null>(null);
+  const [revoking, setRevoking] = useState<AdminRecord | null>(null);
   const { setExcluded, busyUid } = useExportVisibility();
 
   // Add admin
@@ -42,253 +32,168 @@ export default function AdminManagePage() {
     if (!authLoading && (!profile || profile.scope !== "super")) router.push("/admin/create");
   }, [authLoading, profile, router]);
 
-  const getToken = async () => clientAuth.currentUser?.getIdToken();
-
   const fetchData = useCallback(async () => {
     setLoadingAdmins(true);
-    try {
-      const token = await getToken();
-      const [aRes, cRes] = await Promise.all([
-        fetch("/api/admin", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/courses?all=true", { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      const [a, c] = await Promise.all([aRes.json(), cRes.json()]);
-      setAdmins(a.admins || []);
-      setCourses(c.courses || []);
-    } catch { /* silent */ } finally { setLoadingAdmins(false); }
+    const [a, c] = await Promise.all([adminFetch<{ admins: AdminRecord[] }>("/api/admin"), adminFetch<{ courses: CourseLite[] }>("/api/courses?all=true")]);
+    if (!a.ok && !a.outOfScope) toast.error(a.error || "Couldn't load admins.");
+    setAdmins(a.data.admins || []);
+    setCourses(c.data.courses || []);
+    setLoadingAdmins(false);
   }, []);
 
   useEffect(() => { if (profile?.scope === "super") fetchData(); }, [profile, fetchData]);
 
-  const startEdit = (admin: AdminRecord) => {
-    setEditingUid(admin.uid);
-    setEditScope(admin.scope || "defined");
-    setEditCourses(admin.assignedCourses || []);
-  };
-
-  const saveEdit = async () => {
-    if (!editingUid) return;
-    setSaving(true);
-    try {
-      const token = await getToken();
-      const res = await fetch("/api/admin", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ uid: editingUid, scope: editScope, assignedCourses: editCourses }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error); return; }
-      toast.success("Admin role updated.");
-      setEditingUid(null);
-      fetchData();
-    } catch { toast.error("Failed to save."); } finally { setSaving(false); }
-  };
-
-  const revokeAdmin = async (uid: string) => {
-    if (!confirm("Revoke this admin's access?")) return;
-    try {
-      const token = await getToken();
-      const res = await fetch("/api/admin", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ uid }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error); return; }
-      toast.success("Admin access revoked.");
-      fetchData();
-    } catch { toast.error("Failed to revoke."); }
-  };
-
   const addAdmin = async () => {
     if (!email) return;
     setAddingAdmin(true);
-    try {
-      const token = await getToken();
-      const res = await fetch("/api/admin/add", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) { toast.error(data.error); return; }
-      toast.success(
-        data.scope === "super"
-          ? `Admin access granted to ${email}`
-          : `${email} is now a scoped admin. Use Edit Role to assign their courses.`
-      );
-      setEmail("");
-      fetchData();
-    } catch { toast.error("Failed to add admin."); } finally { setAddingAdmin(false); }
+    const r = await adminFetch<{ scope?: string }>("/api/admin/add", { body: { email } });
+    setAddingAdmin(false);
+    if (!r.ok) { toast.error(r.error); return; }
+    toast.success(
+      r.data.scope === "super"
+        ? `Admin access granted to ${email}`
+        : `${email} is now a scoped admin. Tap Edit role to assign their courses and scopes.`
+    );
+    setEmail("");
+    fetchData();
   };
 
   if (authLoading || profile?.scope !== "super") return null;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 w-full">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Admin Management</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-          Grant, edit, or revoke admin roles and course assignments
+          Grant, edit, or revoke admin roles, course assignments and scopes
         </p>
       </div>
 
       {/* Add admin */}
-      <Card className="p-5 space-y-3">
+      <Card className="p-4 sm:p-5 space-y-3">
         <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Grant Admin Access</h2>
-        <div className="flex gap-2">
-          <Input
-            placeholder="Email address"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="flex-1"
-          />
-          <Button loading={addingAdmin} onClick={addAdmin}>Grant Access</Button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="min-w-0 flex-1">
+            <Input placeholder="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addAdmin()} />
+          </div>
+          <Button loading={addingAdmin} onClick={addAdmin} className="sm:self-start">Grant Access</Button>
         </div>
       </Card>
 
-      {/* Admin list */}
-      <Card className="p-5 space-y-4">
-        <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Current Admins</h2>
+      {/* Admin list: stacked cards, readable on a phone */}
+      <Card className="p-4 sm:p-5 space-y-4">
+        <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Current Admins {!loadingAdmins && <span className="font-normal text-slate-400">({admins.length})</span>}</h2>
         {loadingAdmins ? (
-          <div className="space-y-2">{Array(3).fill(0).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+          <div className="space-y-2">{Array(3).fill(0).map((_, i) => <Skeleton key={i} className="h-28" />)}</div>
         ) : admins.length === 0 ? (
           <p className="text-sm text-slate-400 py-3 text-center">No admins found.</p>
         ) : (
           <div className="space-y-3">
-            {admins.map((admin) => (
-              <div key={admin.uid} className="border border-slate-200 dark:border-slate-700 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center text-brand-700 dark:text-brand-300 font-bold text-sm">
+            {admins.map((admin) => {
+              const isYou = admin.uid === profile.uid;
+              const isSuper = admin.scope === "super";
+              return (
+                <div key={admin.uid} className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 sm:p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 shrink-0 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center text-brand-700 dark:text-brand-300 font-bold text-sm">
                       {admin.name?.[0]?.toUpperCase() || "A"}
                     </div>
-                    <div>
-                      <p className="font-medium text-sm text-slate-900 dark:text-white">{admin.name}</p>
-                      <p className="text-xs text-slate-400">{admin.email}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm text-slate-900 dark:text-white break-words">{admin.name || "Unnamed admin"}</p>
+                      <p className="text-xs text-slate-400 flex items-center gap-1 break-all"><Mail className="w-3 h-3 shrink-0" />{admin.email}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <Badge variant={isSuper ? "green" : "blue"}>{isSuper ? "Super Admin" : "Scoped Admin"}</Badge>
+                      {isYou && <Badge variant="slate">You</Badge>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={admin.scope === "super" ? "green" : "blue"}>
-                      {admin.scope === "super" ? "Super Admin" : "Scoped Admin"}
-                    </Badge>
-                    {admin.uid !== profile.uid && (
-                      <>
-                        <Button size="sm" variant="outline" icon={<UserCog className="w-3.5 h-3.5" />}
-                          onClick={() => editingUid === admin.uid ? setEditingUid(null) : startEdit(admin)}>
-                          {editingUid === admin.uid ? "Cancel" : "Edit Role"}
-                        </Button>
-                        <Button size="sm" variant="danger" icon={<ShieldOff className="w-3.5 h-3.5" />}
-                          onClick={() => revokeAdmin(admin.uid)}>
-                          Revoke
-                        </Button>
-                      </>
-                    )}
-                    {admin.uid === profile.uid && (
-                      <Badge variant="slate">You</Badge>
-                    )}
-                  </div>
-                </div>
 
-                {/* Super admins can override whether this admin's own attendance shows in PDF exports */}
-                {admin.regNumber && (
-                  <ExportVisibilityToggle
-                    label="Hide this admin from attendance exports"
-                    checked={!!admin.excludeFromExports}
-                    busy={busyUid === admin.uid}
-                    onChange={async (next) => {
-                      if (await setExcluded(next, admin.uid)) {
-                        if (admin.uid === profile.uid) void refreshProfile();
-                        setAdmins((prev) => prev.map((a) => (a.uid === admin.uid ? { ...a, excludeFromExports: next } : a)));
-                      }
-                    }}
-                  />
-                )}
-
-                {/* Inline editor */}
-                {editingUid === admin.uid && (
-                  <div className="border-t border-slate-100 dark:border-slate-700 pt-3 space-y-3 animate-slide-up">
-                    <Select
-                      label="Role"
-                      value={editScope}
-                      onChange={(e) => setEditScope(e.target.value as "super" | "defined")}
-                      options={[
-                        { value: "super", label: "Super Admin — full access" },
-                        { value: "defined", label: "Scoped Admin — assigned courses only" },
-                      ]}
-                    />
-
-                    {editScope === "defined" && (
-                      <div>
-                        <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                          Assigned Courses
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          {courses.map((course) => {
-                            const checked = editCourses.includes(course.id);
-                            return (
-                              <label key={course.id}
-                                className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg cursor-pointer border transition-colors ${
-                                  checked
-                                    ? "bg-brand-50 dark:bg-brand-950 border-brand-300 dark:border-brand-700 text-brand-700 dark:text-brand-300"
-                                    : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400"
-                                }`}
-                              >
-                                <input type="checkbox" className="accent-brand-600"
-                                  checked={checked}
-                                  onChange={(e) => {
-                                    setEditCourses(
-                                      e.target.checked
-                                        ? [...editCourses, course.id]
-                                        : editCourses.filter((id) => id !== course.id)
-                                    );
-                                  }}
-                                />
-                                <BookOpen className="w-3 h-3 shrink-0" />
-                                <span className="truncate">{course.code} — {course.name}</span>
-                              </label>
-                            );
+                  {!isSuper && (
+                    <div className="space-y-2">
+                      {(admin.assignedCourses?.length ?? 0) > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {admin.assignedCourses!.map((cId) => {
+                            const c = courses.find((x) => x.id === cId);
+                            return c ? (
+                              <span key={cId} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                                <BookOpen className="w-3 h-3" />{c.code}
+                              </span>
+                            ) : null;
                           })}
                         </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                          <Lock className="w-3 h-3" /><span>No courses assigned yet</span>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-1.5">
+                        {(admin.scopes ?? []).length === 0 ? (
+                          <span className="text-xs text-slate-400">No scopes granted</span>
+                        ) : (
+                          admin.scopes!.map((k) => (
+                            <span key={k} title={scopeDef(k)?.description} className="font-mono text-[11px] px-2 py-0.5 rounded-full bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300">
+                              {k}{k === "student.mark" && admin.scopeLimits?.["student.mark"] ? ` ≤${admin.scopeLimits["student.mark"]}/class` : ""}
+                            </span>
+                          ))
+                        )}
                       </div>
-                    )}
+                    </div>
+                  )}
 
-                    <div className="flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setEditingUid(null)}>Cancel</Button>
-                      <Button size="sm" icon={<Shield className="w-3.5 h-3.5" />}
-                        loading={saving} onClick={saveEdit}>
-                        Save Role
+                  {/* Super admins can override whether this admin's own attendance shows in PDF exports */}
+                  {admin.regNumber && (
+                    <ExportVisibilityToggle
+                      label="Hide this admin from attendance exports"
+                      checked={!!admin.excludeFromExports}
+                      busy={busyUid === admin.uid}
+                      onChange={async (next) => {
+                        if (await setExcluded(next, admin.uid)) {
+                          if (isYou) void refreshProfile();
+                          setAdmins((prev) => prev.map((a) => (a.uid === admin.uid ? { ...a, excludeFromExports: next } : a)));
+                        }
+                      }}
+                    />
+                  )}
+
+                  {!isYou && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button size="sm" variant="outline" icon={<UserCog className="w-3.5 h-3.5" />} onClick={() => setEditing(admin)}>
+                        Edit Role
+                      </Button>
+                      <Button size="sm" variant="danger" icon={<ShieldOff className="w-3.5 h-3.5" />} onClick={() => setRevoking(admin)}>
+                        Revoke
                       </Button>
                     </div>
-                  </div>
-                )}
-
-                {/* Assigned courses display (view mode) */}
-                {editingUid !== admin.uid && admin.scope === "defined" && (admin.assignedCourses?.length ?? 0) > 0 && (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {admin.assignedCourses!.map((cId) => {
-                      const c = courses.find((x) => x.id === cId);
-                      return c ? (
-                        <span key={cId} className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                          {c.code}
-                        </span>
-                      ) : null;
-                    })}
-                  </div>
-                )}
-
-                {editingUid !== admin.uid && admin.scope === "defined" && !admin.assignedCourses?.length && (
-                  <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                    <Lock className="w-3 h-3" />
-                    <span>No courses assigned yet</span>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
+
+      <AdminRoleSheet admin={editing} courses={courses} onClose={() => setEditing(null)} onSaved={fetchData} />
+
+      <ConfirmJobSheet<null>
+        open={!!revoking}
+        onClose={() => setRevoking(null)}
+        icon={<ShieldOff className="h-5 w-5" />}
+        title="Revoke admin access?"
+        subtitle={revoking ? revoking.name || revoking.email : undefined}
+        confirmLabel="Revoke access"
+        runningTitle="Revoking access"
+        run={async (onProgress) => {
+          onProgress({ step: "Removing admin access and course assignments…" });
+          const r = await adminFetch("/api/admin", { method: "DELETE", body: { uid: revoking?.uid } });
+          return r.ok ? { ok: true, result: null } : { ok: false, error: r.error, outOfScope: r.outOfScope };
+        }}
+        success={() => ({ title: "Access revoked", body: <p>{revoking?.name || revoking?.email} is no longer an admin.</p> })}
+        onFinished={fetchData}
+      >
+        <p className="rounded-2xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/50 dark:text-red-300">
+          They lose admin access and every course assignment straight away. Their student account and attendance are not touched.
+        </p>
+      </ConfirmJobSheet>
     </div>
   );
 }

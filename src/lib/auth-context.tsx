@@ -19,6 +19,9 @@ export interface UserProfile {
   admin: boolean;
   scope?: "super" | "defined";
   assignedCourses?: string[];
+  /** Scoped admins: what they may do (missing = the pre-scopes defaults) and the cap on `student.mark`. */
+  scopes?: string[];
+  scopeLimits?: { "student.mark"?: number | null };
   /** Admins only: leave this admin's own attendance records out of PDF exports. */
   excludeFromExports?: boolean;
   banned: boolean;

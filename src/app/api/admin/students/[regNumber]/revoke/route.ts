@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebase-admin";
 import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import type { RevokeRecord } from "@/types/admin";
 
@@ -16,6 +17,9 @@ const recordsQuery = (reg: string, courseId: string, date: string) =>
 async function validate(req: NextRequest, ctx: Ctx, date: string | null, courseId: string | null) {
   const admin = await verifyAdmin(req);
   if (!admin) return { error: NextResponse.json({ error: "Admin access required" }, { status: 403 }) };
+  // Revoking is the other half of marking, so it sits under the same scope
+  const denied = requireScope(admin, "student.mark");
+  if (denied) return { error: denied };
 
   const reg = (await ctx.params).regNumber.trim().toUpperCase();
   if (!REG_NUMBER_REGEX.test(reg)) return { error: NextResponse.json({ error: "Invalid registration number." }, { status: 400 }) };

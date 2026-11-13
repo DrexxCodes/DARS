@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/firebase-admin";
 import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { enrollmentRef, enrollmentsCol } from "@/lib/enrollment";
 import { levelOf } from "@/lib/admission";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
     const { courseId, regNumber, decision } = await req.json();
     const r = await resolveCourse(req, courseId);
     if ("error" in r) return r.error;
+    // Approving or removing an Added Course is enlisting / delisting a student for the course
+    const denied = requireScope(r.admin, "course.student.enlist");
+    if (denied) return denied;
 
     const reg = typeof regNumber === "string" ? regNumber.trim().toUpperCase() : "";
     if (!REG_NUMBER_REGEX.test(reg)) return NextResponse.json({ error: "Invalid registration number." }, { status: 400 });

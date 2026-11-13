@@ -7,6 +7,7 @@ import { Badge, Button, Card, Skeleton } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { levelLabel } from "@/constants/academics";
 import type { CarryoverRequest } from "@/types/admin";
+import { handleOutOfScope } from "@/lib/scope-events";
 
 /** Added Course requests for the selected course. Any admin of the course (or a super admin) can decide. */
 export default function CarryoverRequestsCard({ courseId }: { courseId: string }) {
@@ -42,7 +43,9 @@ export default function CarryoverRequestsCard({ courseId }: { courseId: string }
         body: JSON.stringify({ courseId, regNumber: r.regNumber, decision }),
       });
       const data = await res.json();
-      if (!res.ok) toast.error(data.error || "Couldn't save your decision.");
+      if (!res.ok) {
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't save your decision.");
+      }
       else toast.success(decision === "approve" ? `${r.name} approved.` : r.status === "approved" ? `${r.name} removed.` : `${r.name} declined.`);
       load();
     } catch {

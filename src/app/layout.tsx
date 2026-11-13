@@ -16,6 +16,7 @@ import { Toaster } from "sonner";
 import PageTransition from "@/components/ui/PageTransition";
 import ProfileGate from "@/components/gate/ProfileGate";
 import SsoPrompt from "@/components/sso/SsoPrompt";
+import OutOfScopeSheet from "@/components/ui/OutOfScopeSheet";
 
 // Keeps toasts below the notch / Dynamic Island / status bar on iPhones.
 const TOAST_TOP_OFFSET = "calc(env(safe-area-inset-top, 0px) + 12px)";
@@ -75,6 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <OpenInAppHint />
             <ServiceWorkerRegister />
             <SsoPrompt />
+            <OutOfScopeSheet />
             </ProfileGate>
             <Toaster
               position="top-center"

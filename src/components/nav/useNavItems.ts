@@ -34,23 +34,27 @@ export function useNavItems(): NavItem[] {
   const isAdmin = profile?.admin === true;
   const isSuper = isAdmin && profile?.scope === "super";
 
-  const items: NavItem[] = [
-    { href: "/mark", label: "Mark Attendance", shortLabel: "Mark", icon: UserCheck },
-  ];
+  const mark: NavItem = { href: "/mark", label: "Mark Attendance", shortLabel: "Mark", icon: UserCheck };
+  const home: NavItem = profile
+    ? { href: "/dashboard", label: "Dashboard", shortLabel: "Dashboard", icon: LayoutDashboard }
+    : { href: "/auth/login", label: "Login", shortLabel: "Login", icon: LogIn };
+  const classes: NavItem = { href: "/admin/create", label: "Classes", shortLabel: "Classes", icon: BookOpen };
+  const students: NavItem = { href: "/admin/students", label: "Students", shortLabel: "Students", icon: Users };
+  // Viewing admins and editing their roles & scopes
+  const roles: NavItem = { href: "/admin", label: "Admin Roles & Scopes", shortLabel: "Roles", icon: ShieldCheck };
+  // Every admin can open Tags; what they can do there depends on their tags.* scopes
+  const tags: NavItem = { href: "/admin/tags", label: "Location Tags", shortLabel: "Tags", icon: MapPin };
+  const grant: NavItem = { href: "/admin/add", label: "Grant Admin & Bulk Upload", shortLabel: "Grant", icon: UserCog };
+  const reset: NavItem = { href: "/admin/reset", label: "Admin Reset", shortLabel: "Reset", icon: RotateCcw };
 
-  if (!profile) items.push({ href: "/auth/login", label: "Login", shortLabel: "Login", icon: LogIn });
-  else items.push({ href: "/dashboard", label: "Dashboard", shortLabel: "Dashboard", icon: LayoutDashboard });
+  // The phone's bottom bar only fits four items before "More". Super admins get Roles in that first row (it used to sit
+  // inside "More" under the vague label "Admin"), with Dashboard moved into More.
+  const items: NavItem[] = isSuper
+    ? [mark, classes, students, roles, home, tags, grant, reset]
+    : isAdmin
+      ? [mark, home, classes, students, tags]
+      : [mark, home];
 
-  if (isAdmin) {
-    items.push({ href: "/admin/create", label: "Classes", shortLabel: "Classes", icon: BookOpen });
-    items.push({ href: "/admin/students", label: "Students", shortLabel: "Students", icon: Users });
-  }
-  if (isSuper) {
-    items.push({ href: "/admin", label: "Admin", shortLabel: "Admin", icon: ShieldCheck });
-    items.push({ href: "/admin/tags", label: "Location Tags", shortLabel: "Tags", icon: MapPin });
-    items.push({ href: "/admin/add", label: "Manage Admins", shortLabel: "Admins", icon: UserCog });
-    items.push({ href: "/admin/reset", label: "Admin Reset", shortLabel: "Reset", icon: RotateCcw });
-  }
   items.push({ href: "#credits", label: "Credits", shortLabel: "Credits", icon: Heart, action: "credits" });
   return items;
 }

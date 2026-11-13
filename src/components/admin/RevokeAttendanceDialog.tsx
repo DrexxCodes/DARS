@@ -7,6 +7,7 @@ import { Button, Dialog, Input, Select } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { formatTime, todayKey } from "@/lib/utils";
 import type { RevokeRecord } from "@/types/admin";
+import { handleOutOfScope } from "@/lib/scope-events";
 
 interface CourseOption {
   courseId: string;
@@ -55,7 +56,7 @@ export default function RevokeAttendanceDialog({ open, onClose, onDone, student,
       const res = await fetch(`${base}?${params}`, { headers: await authHeaders() });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Couldn't look up attendance.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't look up attendance.");
         return;
       }
       setRecords(data.records);
@@ -76,7 +77,7 @@ export default function RevokeAttendanceDialog({ open, onClose, onDone, student,
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Couldn't revoke attendance.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't revoke attendance.");
         return;
       }
       toast.success(`Revoked ${data.revoked} record${data.revoked === 1 ? "" : "s"} for ${student.name}.`);

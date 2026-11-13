@@ -30,7 +30,7 @@ export default function RelistSheet({ open, onClose, course, student, onDone }: 
     setBusy(false);
     if (!result.ok) {
       haptic([60, 40, 60]);
-      toast.error(result.error);
+      if (result.error) toast.error(result.error);
       return;
     }
     haptic([30, 60, 30]);

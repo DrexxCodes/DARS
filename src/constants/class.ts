@@ -11,3 +11,12 @@ export const CLASS_LIMITS = {
   MAX_DURATION_MIN: 12 * 60,
   NAME_MAX: 60,
 } as const;
+
+/** Extending a class (running or already ended). */
+export const EXTEND_LIMITS = {
+  MIN_MIN: 1,
+  /** A class (start to the new end) can never run longer than this. */
+  MAX_TOTAL_MIN: CLASS_LIMITS.MAX_DURATION_MIN,
+  /** Quick picks in the extend sheet, in minutes. */
+  PRESETS_MIN: [15, 30, 45, 60],
+} as const;

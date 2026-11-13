@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Pencil } from "lucide-react";
 import { Button, Dialog, Input } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
+import { handleOutOfScope } from "@/lib/scope-events";
 
 interface Props {
   open: boolean;
@@ -42,7 +43,7 @@ export default function EditStudentNameDialog({ open, onClose, onSaved, student 
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Couldn't update the name.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't update the name.");
         return;
       }
       toast.success("Name updated.");

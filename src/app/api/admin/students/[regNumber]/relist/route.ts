@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebase-admin";
-import { verifyAdmin, isSuperAdmin } from "@/lib/admin-auth";
+import { verifyAdmin, canAccessCourse } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import { courseVisibleToStudent } from "@/lib/admission";
 import { audienceOf, enrollmentRef } from "@/lib/enrollment";
 
 type Ctx = { params: Promise<{ regNumber: string }> };
 
-// POST { courseId } — a super admin adds a delisted student back to a course.
+// POST { courseId } — an admin with the course.student.enlist scope adds a delisted student back to a course.
 // Their attendance for the course was wiped when they delisted and is NOT restored; they start fresh from the next class.
 export async function POST(req: NextRequest, ctx: Ctx) {
   try {
     const admin = await verifyAdmin(req);
-    if (!isSuperAdmin(admin)) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+    if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    const denied = requireScope(admin, "course.student.enlist");
+    if (denied) return denied;
 
     const reg = (await ctx.params).regNumber.trim().toUpperCase();
     if (!REG_NUMBER_REGEX.test(reg)) return NextResponse.json({ error: "Invalid registration number." }, { status: 400 });
@@ -21,6 +24,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { courseId } = await req.json();
     if (typeof courseId !== "string" || !courseId || courseId.includes("/")) {
       return NextResponse.json({ error: "A course is required." }, { status: 400 });
+    }
+    if (!(await canAccessCourse(admin, courseId))) {
+      return NextResponse.json({ error: "You don't have access to that course." }, { status: 403 });
     }
 
     const courseDoc = await db.collection("courses").doc(courseId).get();

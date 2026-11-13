@@ -1,29 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, auth } from "@/lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
+import { db } from "@/lib/firebase-admin";
+import { verifyAdmin, isSuperAdmin } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { parseAdmissionTypes, parseDepartments, parseLevels } from "@/lib/admission";
-
-interface AdminUser {
-  uid: string;
-  admin: boolean;
-  scope?: "super" | "defined";
-  assignedCourses?: string[];
-  [key: string]: unknown;
-}
-
-async function verifyAdmin(req: NextRequest): Promise<AdminUser | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return null;
-  try {
-    const decoded = await auth.verifyIdToken(token);
-    const userDoc = await db.collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists) return null;
-    const user = userDoc.data()!;
-    if (!user.admin) return null;
-    return { uid: decoded.uid, ...user } as AdminUser;
-  } catch {
-    return null;
-  }
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -47,9 +27,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const admin = await verifyAdmin(req);
-  if (!admin || admin.scope !== "super") {
-    return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
-  }
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const denied = requireScope(admin, "course.create");
+  if (denied) return denied;
 
   try {
     const { name, code, description, levels: rawLevels, departments: rawDepartments, admissionTypes: rawAdmissionTypes } = await req.json();
@@ -74,7 +54,8 @@ export async function POST(req: NextRequest) {
       levels,
       departments,
       admissionTypes,
-      assignedAdmins: [],
+      // A scoped admin who creates a course gets it assigned, otherwise they could never see it
+      assignedAdmins: admin.scope === "defined" ? [admin.uid] : [],
       active: true,
       totalClasses: 0,   // ← denormalized counter
       createdAt: now,
@@ -91,6 +72,19 @@ export async function POST(req: NextRequest) {
       endTime: null,
     });
 
+    if (admin.scope === "defined") {
+      await db.collection("users").doc(admin.uid).update({ assignedCourses: FieldValue.arrayUnion(ref.id) });
+    }
+
+    await db.collection("activityLog").add({
+      action: "create_course",
+      courseId: ref.id,
+      courseName: name,
+      adminUid: admin.uid,
+      adminName: admin.name,
+      timestamp: now,
+    });
+
     return NextResponse.json({ success: true, courseId: ref.id }, { status: 201 });
   } catch (error) {
     console.error("Create course error:", error);
@@ -100,7 +94,7 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const adminUser = await verifyAdmin(req);
-  if (!adminUser || adminUser.scope !== "super") {
+  if (!isSuperAdmin(adminUser)) {
     return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
   }
 

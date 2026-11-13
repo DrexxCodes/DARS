@@ -11,6 +11,9 @@ import { audienceOf, DELISTED_MESSAGE, DELISTED_MESSAGE_FOR_ADMIN, enrollmentRef
 import { ttlCache } from "@/lib/ttl-cache";
 import { LOCATION_LIMITS } from "@/constants/location";
 import { DEVICE_CONFLICT, SIGNALS_REQUIRED, buildDeviceClaims, getClientIp, parseDeviceSignals } from "@/lib/device-check";
+import { requireScope, markLimitFor, outOfScope, markLimitMessage } from "@/lib/scopes";
+import { adminMarksRef } from "@/lib/mark-limit";
+import type { AdminUser } from "@/lib/admin-auth";
 import { bindingRef, decideBinding, hashDeviceId, resolveDeviceId, setDeviceCookie } from "@/lib/device-binding";
 
 interface LocationTag { name: string; lat: number; lng: number; radiusMeters: number }
@@ -73,10 +76,14 @@ export async function POST(req: NextRequest) {
     const caller = callerDoc.data()!;
 
     let normalized: string;
+    let callerAdmin: AdminUser | null = null;
     if (targetRegNumber) {
       if (!caller.admin) {
         return NextResponse.json({ error: "Only an admin can mark attendance for another student.", code: "FORBIDDEN" }, { status: 403 });
       }
+      callerAdmin = { uid: callerUid, ...caller } as AdminUser;
+      const denied = requireScope(callerAdmin, "student.mark");
+      if (denied) return denied;
       normalized = String(targetRegNumber).trim().toUpperCase();
     } else {
       if (!caller.regNumber) return NextResponse.json({ error: "Your account has no registration number on file." }, { status: 400 });
@@ -161,14 +168,24 @@ export async function POST(req: NextRequest) {
       ? buildDeviceClaims({ courseId, classId, startTime: global.startTime, endTime: global.endTime, regNumber: normalized, ip, fingerprint: signals.fingerprint })
       : null;
 
-    const [studentDoc, existingMark, claimSnaps, bindingSnap, location, enrolDoc] = await Promise.all([
+    // A scoped admin marking for someone: their course assignment and their per-class cap are checked alongside the rest
+    const scopedMarker = targetRegNumber && callerAdmin?.scope === "defined" ? callerAdmin : null;
+    const markCounterRef = scopedMarker ? adminMarksRef(courseId, classId, callerUid) : null;
+
+    const [studentDoc, existingMark, claimSnaps, bindingSnap, location, enrolDoc, courseAssignDoc, markCounterSnap] = await Promise.all([
       studentRef.get(),
       attendanceRef.get(),
       claims ? db.getAll(...claims.refs) : Promise.resolve([]),
       deviceHash ? bindingRef(deviceHash).get() : Promise.resolve(null),
       loadLocation(global.locationId),
       enrollmentRef(courseId, normalized).get(),
+      scopedMarker ? db.collection("courses").doc(courseId).get() : Promise.resolve(null),
+      markCounterRef ? markCounterRef.get() : Promise.resolve(null),
     ]);
+
+    if (scopedMarker && !((courseAssignDoc?.data()?.assignedAdmins as string[] | undefined) ?? []).includes(callerUid)) {
+      return reply({ error: "You are not assigned to this course.", code: "FORBIDDEN" }, { status: 403 });
+    }
 
     // Applies to an admin marking for another student too, so a course's records only ever hold students who take it.
     const enrolStatus = enrolDoc.exists ? (enrolDoc.data()?.status as string | undefined) : undefined;
@@ -265,6 +282,12 @@ export async function POST(req: NextRequest) {
       return reply(DEVICE_CONFLICT, { status: 403 });
     }
 
+    // Per-class cap on how many students a scoped admin can mark for (super admins and uncapped admins skip this)
+    const markCap = scopedMarker ? markLimitFor(scopedMarker) : null;
+    if (markCap !== null && Number(markCounterSnap?.data()?.count ?? 0) >= markCap) {
+      return outOfScope("student.mark", "limit", markLimitMessage(markCap));
+    }
+
     const now = Date.now();
     const late = isLateAttendance(global.startTime, global.lateAfterMinutes);
 
@@ -296,6 +319,10 @@ export async function POST(req: NextRequest) {
       // create() so two accounts racing to link the same browser can't both win
       if (binding.overwrite) batch.set(bindingRef(deviceHash), link);
       else batch.create(bindingRef(deviceHash), link);
+    }
+
+    if (markCounterRef) {
+      batch.set(markCounterRef, { count: FieldValue.increment(1), adminUid: callerUid, updatedAt: now }, { merge: true });
     }
 
     // Device claims (create() fails if a racing request already took either one)

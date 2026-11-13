@@ -14,6 +14,8 @@ import { useLocationFix } from "@/hooks/useLocationFix";
 import { useMarkStatus } from "@/hooks/useMarkStatus";
 import { useCarryovers } from "@/hooks/useCarryovers";
 import CarryoverDialog from "@/components/mark/CarryoverDialog";
+import NoActiveClassSheet from "@/components/mark/NoActiveClassSheet";
+import { isClassExpired } from "@/lib/utils";
 import { courseVisibleToStudent, levelOf } from "@/lib/admission";
 import { levelLabel } from "@/constants/academics";
 import { Dialog, Button } from "@/components/ui";
@@ -21,7 +23,7 @@ import { AlertCircle, UserX, Clock, PauseCircle, ArrowLeft, LogIn, GraduationCap
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-type DialogType = "not_found" | "ended" | "paused" | "carryover" | null;
+type DialogType = "not_found" | "ended" | "paused" | "carryover" | "no_class" | null;
 
 export default function MarkPage() {
   const router = useRouter();
@@ -30,6 +32,7 @@ export default function MarkPage() {
   const { entries: carryovers, refresh: refreshCarryovers } = useCarryovers(!!profile?.regNumber);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogType>(null);
+  const [inactiveCourseId, setInactiveCourseId] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ name: string; late: boolean; timestamp: number } | null>(null);
   // Starts the moment the student is signed in, so a precise fix is ready by the time they pick a course.
   const location = useLocationFix(!!profile);
@@ -92,14 +95,17 @@ export default function MarkPage() {
   const selectedCourseName = courses.find((c) => c.id === selectedCourse)?.name || "";
 
   const handleCourseSelect = (id: string) => {
+    const g = globals[id];
+    // No class running (never started, ended, or its check-in window closed): say so instead of opening a dead end
+    const running = !!g?.classActive && !(g.startTime && isClassExpired(g.startTime, g.endTime));
+    if (!running) {
+      setInactiveCourseId(id);
+      setDialog("no_class");
+      return;
+    }
     setSelectedCourse(id);
     setSuccess(null);
-    const g = globals[id];
-    if (g?.classActive === false) {
-      setDialog("ended");
-    } else if (g?.checkinPaused) {
-      setDialog("paused");
-    }
+    if (g?.checkinPaused) setDialog("paused");
   };
 
   return (
@@ -121,9 +127,12 @@ export default function MarkPage() {
         <Card className="p-6">
           {!selectedCourse ? (
             <>
-              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4 uppercase tracking-wide">
+              <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1 uppercase tracking-wide">
                 Select Course
               </h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                Please click on the course you&apos;re offering to mark attendance.
+              </p>
               <CourseSelector
                 courses={courses}
                 globals={globals as Record<string, { classActive: boolean; checkinPaused: boolean; startTime: number }>}
@@ -199,6 +208,12 @@ export default function MarkPage() {
         onClose={() => setDialog(null)}
         entries={carryovers}
         onChanged={refreshCarryovers}
+      />
+
+      <NoActiveClassSheet
+        open={dialog === "no_class"}
+        onClose={() => setDialog(null)}
+        course={courses.find((c) => c.id === inactiveCourseId) ?? null}
       />
 
       {/* Not Found Dialog */}

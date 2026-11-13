@@ -9,6 +9,8 @@ import { getBestPosition } from "@/lib/geolocation-client";
 import { accuracyTier, ACCURACY_GOOD_M, ACCURACY_POOR_M } from "@/lib/location-accuracy";
 import { RADIUS_LIMITS } from "@/constants/location";
 import { toast } from "sonner";
+import { useScopes } from "@/hooks/useScopes";
+import { handleOutOfScope } from "@/lib/scope-events";
 import {
   MapPin, Plus, Tag as TagIcon, Crosshair, AlertTriangle, Ruler,
 } from "lucide-react";
@@ -19,6 +21,7 @@ type CaptureStatus = "idle" | "capturing" | "captured" | "denied" | "unavailable
 
 export default function TagsPage() {
   const { profile, loading: authLoading } = useAuth();
+  const { guard } = useScopes();
   const router = useRouter();
 
   const [locations, setLocations] = useState<LocationTag[]>([]);
@@ -43,7 +46,7 @@ export default function TagsPage() {
   const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!authLoading && (!profile || profile.scope !== "super")) router.push("/");
+    if (!authLoading && (!profile || !profile.admin)) router.push("/");
   }, [authLoading, profile, router]);
 
   const getToken = async () => clientAuth.currentUser?.getIdToken();
@@ -62,7 +65,7 @@ export default function TagsPage() {
     }
   }, []);
 
-  useEffect(() => { if (profile?.scope === "super") fetchLocations(); }, [profile, fetchLocations]);
+  useEffect(() => { if (profile?.admin) fetchLocations(); }, [profile, fetchLocations]);
 
   const resetForm = () => {
     setShowForm(false);
@@ -75,6 +78,7 @@ export default function TagsPage() {
   };
 
   const startCapture = () => {
+    if (!guard("tags.create")) return;
     setShowForm(true);
     if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
       setCaptureStatus("unsupported");
@@ -94,6 +98,7 @@ export default function TagsPage() {
   };
 
   const handleCreate = async () => {
+    if (!guard("tags.create")) return;
     if (!coords) { toast.error("Location hasn't been captured yet."); return; }
     if (!name.trim()) { toast.error("Give this location a name."); return; }
     const radiusNum = Number(radius);
@@ -115,7 +120,7 @@ export default function TagsPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "Failed to create tag."); return; }
+      if (!res.ok) { if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Failed to create tag."); return; }
       toast.success(`Location "${name.trim()}" created.`);
       resetForm();
       fetchLocations();
@@ -127,6 +132,7 @@ export default function TagsPage() {
   };
 
   const handleSaveRadius = async () => {
+    if (!guard("tags.edit")) return;
     if (!editing) return;
     const r = Number(editRadius);
     if (!Number.isFinite(r) || r < RADIUS_LIMITS.MIN_M || r > RADIUS_LIMITS.MAX_M) {
@@ -142,7 +148,7 @@ export default function TagsPage() {
         body: JSON.stringify({ id: editing.id, radiusMeters: r }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "Failed to update range."); return; }
+      if (!res.ok) { if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Failed to update range."); return; }
       toast.success(`"${editing.name}" range is now ${Math.round(r)} m.`);
       setEditing(null);
       fetchLocations();
@@ -154,6 +160,7 @@ export default function TagsPage() {
   };
 
   const handleSetPrimary = async (id: string) => {
+    if (!guard("tags.edit")) return;
     setSettingPrimaryId(id);
     try {
       const token = await getToken();
@@ -163,7 +170,7 @@ export default function TagsPage() {
         body: JSON.stringify({ id, setPrimary: true }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "Failed to set primary."); return; }
+      if (!res.ok) { if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Failed to set primary."); return; }
       toast.success("Primary location updated.");
       fetchLocations();
     } catch {
@@ -174,6 +181,7 @@ export default function TagsPage() {
   };
 
   const handleDelete = async (id: string, locName: string) => {
+    if (!guard("tags.delete")) return;
     setDeletingId(id);
     try {
       const token = await getToken();
@@ -183,7 +191,7 @@ export default function TagsPage() {
         body: JSON.stringify({ id }),
       });
       const data = await res.json();
-      if (!res.ok) { toast.error(data.error || "Failed to delete tag."); return; }
+      if (!res.ok) { if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Failed to delete tag."); return; }
       toast.success(`"${locName}" deleted.`);
       fetchLocations();
     } catch {
@@ -193,7 +201,7 @@ export default function TagsPage() {
     }
   };
 
-  if (authLoading || !profile || profile.scope !== "super") return null;
+  if (authLoading || !profile?.admin) return null;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8 w-full space-y-6">
@@ -230,7 +238,7 @@ export default function TagsPage() {
                 canDelete={!loc.isPrimary && locations.length > 1}
                 settingPrimary={settingPrimaryId === loc.id}
                 deleting={deletingId === loc.id}
-                onEditRange={() => { setEditing(loc); setEditRadius(String(loc.radiusMeters)); }}
+                onEditRange={() => { if (!guard("tags.edit")) return; setEditing(loc); setEditRadius(String(loc.radiusMeters)); }}
                 onSetPrimary={() => handleSetPrimary(loc.id)}
                 onDelete={() => handleDelete(loc.id, loc.name)}
               />

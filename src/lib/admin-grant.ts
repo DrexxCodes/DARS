@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db, auth } from "@/lib/firebase-admin";
 import { verifyAdmin, isSuperAdmin } from "@/lib/admin-auth";
+import { parseScopeInput, LEGACY_DEFAULT_SCOPES, type ScopeKey, type ScopeLimits } from "@/constants/scopes";
 
 export interface GrantResult {
   status: number;
@@ -43,6 +44,20 @@ export async function grantAdmin(req: NextRequest): Promise<GrantResult> {
   const scope = body.scope === "super" ? "super" : "defined";
   const requested = Array.isArray(body.assignedCourses) ? body.assignedCourses.filter((c): c is string => typeof c === "string") : [];
 
+  // Scopes for a scoped admin. Not sent (e.g. the email-only card) = the pre-scopes defaults.
+  let scopes: ScopeKey[] = [];
+  let scopeLimits: ScopeLimits = {};
+  if (scope === "defined") {
+    if (body.scopes === undefined) {
+      scopes = [...LEGACY_DEFAULT_SCOPES];
+    } else {
+      const parsed = parseScopeInput(body.scopes, body.scopeLimits);
+      if (!parsed.ok) return fail(400, parsed.error, "INVALID_SCOPES");
+      scopes = parsed.scopes;
+      scopeLimits = parsed.scopeLimits;
+    }
+  }
+
   const userDoc = await findUserByEmail(email);
   if (!userDoc) return fail(404, "No DARS account found for that email. They need to register first.", "USER_NOT_FOUND");
 
@@ -58,7 +73,7 @@ export async function grantAdmin(req: NextRequest): Promise<GrantResult> {
   }
 
   const batch = db.batch();
-  batch.update(userDoc.ref, { admin: true, scope, assignedCourses });
+  batch.update(userDoc.ref, { admin: true, scope, assignedCourses, scopes, scopeLimits });
   for (const courseId of assignedCourses) {
     batch.update(db.collection("courses").doc(courseId), { assignedAdmins: FieldValue.arrayUnion(userDoc.id) });
   }
@@ -67,6 +82,7 @@ export async function grantAdmin(req: NextRequest): Promise<GrantResult> {
     targetUid: userDoc.id,
     targetEmail: email,
     scope,
+    scopes,
     courseIds: assignedCourses,
     adminUid: caller.uid,
     adminName: caller.name,

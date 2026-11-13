@@ -1,4 +1,5 @@
 import { clientAuth } from "@/lib/firebase-client";
+import { handleOutOfScope } from "@/lib/scope-events";
 
 export interface RelistOutcome {
   ok: boolean;
@@ -15,7 +16,7 @@ export async function relistCourse(courseId: string, regNumber: string): Promise
       body: JSON.stringify({ courseId }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, error: data.error || "Couldn't add the student back." };
+    if (!res.ok) return { ok: false, error: handleOutOfScope(res.status, data) ? "" : data.error || "Couldn't add the student back." };
     return { ok: true };
   } catch {
     return { ok: false, error: "Network error. Please check your connection." };

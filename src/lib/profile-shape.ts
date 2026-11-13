@@ -13,6 +13,8 @@ export function toClientProfile(uid: string, data: Record<string, unknown>) {
     admin: data.admin === true,
     scope: data.scope ?? undefined,
     assignedCourses: Array.isArray(data.assignedCourses) ? data.assignedCourses : [],
+    scopes: Array.isArray(data.scopes) ? data.scopes : undefined,
+    scopeLimits: data.scopeLimits && typeof data.scopeLimits === "object" ? data.scopeLimits : undefined,
     excludeFromExports: data.excludeFromExports === true ? true : undefined,
     banned: data.banned === true,
     createdAt: data.createdAt ?? undefined,

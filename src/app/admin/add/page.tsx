@@ -8,6 +8,8 @@ import { clientAuth } from "@/lib/firebase-client";
 import { toast } from "sonner";
 import { validateRegNumber, normalizeRegNumber } from "@/lib/utils";
 import Papa from "papaparse";
+import ScopePicker from "@/components/admin/ScopePicker";
+import { LEGACY_DEFAULT_SCOPES, type ScopeKey } from "@/constants/scopes";
 import {
   UserPlus, Upload, ShieldCheck, ShieldOff,
   CheckCircle2, AlertCircle, Loader2, BookOpen
@@ -25,6 +27,8 @@ export default function AdminAddPage() {
   const [adminEmail, setAdminEmail] = useState("");
   const [adminScope, setAdminScope] = useState<"super" | "defined">("defined");
   const [assignedCourses, setAssignedCourses] = useState<string[]>([]);
+  const [scopes, setScopes] = useState<ScopeKey[]>([...LEGACY_DEFAULT_SCOPES]);
+  const [markLimit, setMarkLimit] = useState("");
   const [grantingAdmin, setGrantingAdmin] = useState(false);
 
   const [csvRows, setCsvRows] = useState<UploadRow[]>([]);
@@ -55,13 +59,20 @@ export default function AdminAddPage() {
       const res = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ email: adminEmail, scope: adminScope, assignedCourses }),
+        body: JSON.stringify({
+          email: adminEmail,
+          scope: adminScope,
+          assignedCourses,
+          ...(adminScope === "defined" ? { scopes, scopeLimits: { "student.mark": scopes.includes("student.mark") && markLimit.trim() ? Number(markLimit) : null } } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error); return; }
       toast.success(`Admin access granted to ${adminEmail}`);
       setAdminEmail("");
       setAssignedCourses([]);
+      setScopes([...LEGACY_DEFAULT_SCOPES]);
+      setMarkLimit("");
     } catch { toast.error("Failed to grant admin."); } finally { setGrantingAdmin(false); }
   };
 
@@ -189,7 +200,7 @@ export default function AdminAddPage() {
           value={adminScope}
           onChange={(e) => setAdminScope(e.target.value as "super" | "defined")}
           options={[
-            { value: "defined", label: "Defined — assigned courses only" },
+            { value: "defined", label: "Scoped — assigned courses and chosen scopes" },
             { value: "super", label: "Super — full access to all courses" },
           ]}
         />
@@ -219,6 +230,13 @@ export default function AdminAddPage() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {adminScope === "defined" && (
+          <div>
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Scopes</p>
+            <ScopePicker value={scopes} onChange={setScopes} markLimit={markLimit} onMarkLimitChange={setMarkLimit} />
           </div>
         )}
 

@@ -34,6 +34,7 @@ module.exports = {
         "slide-up": "slideUp 0.4s ease-out forwards",
         "pulse-green": "pulseGreen 2s ease-in-out infinite",
         "sheet-up": "sheetUp 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+        "drawer-in": "drawerIn 0.35s cubic-bezier(0.22, 1, 0.36, 1) forwards",
         float: "float 3s ease-in-out infinite",
       },
       keyframes: {
@@ -52,6 +53,10 @@ module.exports = {
         slideUp: {
           "0%": { transform: "translateY(20px)", opacity: "0" },
           "100%": { transform: "translateY(0)", opacity: "1" },
+        },
+        drawerIn: {
+          "0%": { transform: "translateX(100%)" },
+          "100%": { transform: "translateX(0)" },
         },
         sheetUp: {
           "0%": { transform: "translateY(100%)" },

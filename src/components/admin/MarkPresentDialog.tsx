@@ -7,6 +7,7 @@ import { Button, Dialog, Select, Spinner } from "@/components/ui";
 import { clientAuth } from "@/lib/firebase-client";
 import { formatDisplayDate, formatTime } from "@/lib/utils";
 import type { MarkableSession } from "@/types/admin";
+import { handleOutOfScope } from "@/lib/scope-events";
 
 interface CourseOption {
   courseId: string;
@@ -55,7 +56,7 @@ export default function MarkPresentDialog({ open, onClose, onDone, student, cour
       const res = await fetch(`${base}?courseId=${encodeURIComponent(id)}`, { headers: await authHeaders() });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Couldn't load classes.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't load classes.");
         return;
       }
       const list: MarkableSession[] = data.sessions;
@@ -81,7 +82,7 @@ export default function MarkPresentDialog({ open, onClose, onDone, student, cour
       const res = await fetch(base, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ courseId, classId }) });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Couldn't mark attendance.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Couldn't mark attendance.");
         if (res.status === 409) loadSessions(courseId);
         return;
       }

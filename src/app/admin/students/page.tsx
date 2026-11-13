@@ -15,6 +15,9 @@ import StudentHeaderCard from "@/components/admin/StudentHeaderCard";
 import StudentCourseCard from "@/components/admin/StudentCourseCard";
 import DelistSheet from "@/components/course/DelistSheet";
 import RelistSheet from "@/components/course/RelistSheet";
+import StudentAccountCard, { type StudentAccount } from "@/components/admin/StudentAccountCard";
+import { useScopes } from "@/hooks/useScopes";
+import { handleOutOfScope } from "@/lib/scope-events";
 import ResetDeviceSheet from "@/components/admin/ResetDeviceSheet";
 import type { CourseAttendance } from "@/types/attendance";
 
@@ -29,6 +32,7 @@ interface StudentResult {
 
 export default function StudentSearchPage() {
   const { profile, loading: authLoading } = useAuth();
+  const { guard } = useScopes();
   const router = useRouter();
 
   const [query, setQuery] = useState("");
@@ -36,6 +40,7 @@ export default function StudentSearchPage() {
   const [student, setStudent] = useState<StudentResult | null>(null);
   const [courses, setCourses] = useState<CourseAttendance[]>([]);
   const [overall, setOverall] = useState<Overall | null>(null);
+  const [account, setAccount] = useState<StudentAccount | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [markOpen, setMarkOpen] = useState(false);
   const [editNameOpen, setEditNameOpen] = useState(false);
@@ -52,8 +57,10 @@ export default function StudentSearchPage() {
   const handleSearch = async () => {
     const reg = query.trim().toUpperCase();
     if (!reg) return;
+    if (!guard("student.lookup")) return;
     setSearching(true);
     setStudent(null);
+    setAccount(null);
     setCourses([]);
     setOverall(null);
     try {
@@ -63,10 +70,11 @@ export default function StudentSearchPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Student not found.");
+        if (!handleOutOfScope(res.status, data)) toast.error(data.error || "Student not found.");
         return;
       }
       setStudent({ regNumber: reg, ...data.student });
+      setAccount(data.account ?? null);
       setCourses(data.courses || []);
       setOverall(data.overall ?? null);
     } catch {
@@ -115,10 +123,25 @@ export default function StudentSearchPage() {
         <StudentHeaderCard
           student={student}
           showActions={assignedCourses.length > 0}
-          onEditName={() => setEditNameOpen(true)}
-          onMarkPresent={() => setMarkOpen(true)}
-          onRevoke={() => setRevokeOpen(true)}
+          onEditName={() => guard("student.lookup") && setEditNameOpen(true)}
+          onMarkPresent={() => guard("student.mark") && setMarkOpen(true)}
+          onRevoke={() => guard("student.mark") && setRevokeOpen(true)}
           onResetDevice={isSuper ? () => setResetDeviceOpen(true) : undefined}
+        />
+      )}
+
+      {student && account && (
+        <StudentAccountCard
+          student={{ regNumber: student.regNumber, name: student.name }}
+          account={account}
+          onChanged={handleSearch}
+          onDeleted={() => {
+            setStudent(null);
+            setAccount(null);
+            setCourses([]);
+            setOverall(null);
+            setQuery("");
+          }}
         />
       )}
 
@@ -149,7 +172,7 @@ export default function StudentSearchPage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Courses this student takes</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {assignedCourses.map((c) => (
-                  <StudentCourseCard key={c.courseId} course={c} onDelist={isSuper ? setDelisting : undefined} />
+                  <StudentCourseCard key={c.courseId} course={c} onDelist={(c) => guard("course.student.delist") && setDelisting(c)} />
                 ))}
               </div>
             </div>
@@ -174,14 +197,13 @@ export default function StudentSearchPage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Delisted courses</p>
               <p className="text-xs text-slate-400 px-1">
                 Their attendance for these was cleared when they were delisted. Not counted in the overall rate.
-                {isSuper && " You can add them back, but the cleared attendance doesn't return."}
+                {" You can add them back, but the cleared attendance doesn't return."}
               </p>
               <div className="flex flex-wrap gap-2">
-                {delistedCourses.map((c) =>
-                  isSuper ? (
+                {delistedCourses.map((c) => (
                     <button
                       key={c.courseId}
-                      onClick={() => setRelisting(c)}
+                      onClick={() => guard("course.student.enlist") && setRelisting(c)}
                       className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 font-mono text-xs text-red-600 transition-colors hover:bg-brand-50 hover:text-brand-700 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-brand-950/50 dark:hover:text-brand-300"
                       title={`Add back to ${c.courseCode}`}
                     >
@@ -190,12 +212,7 @@ export default function StudentSearchPage() {
                         <UserPlus className="h-3 w-3" /> Add back
                       </span>
                     </button>
-                  ) : (
-                    <span key={c.courseId} className="text-xs font-mono px-2.5 py-1 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400">
-                      {c.courseCode}
-                    </span>
-                  )
-                )}
+                ))}
               </div>
             </div>
           )}

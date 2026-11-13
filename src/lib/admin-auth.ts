@@ -6,6 +6,9 @@ export interface AdminUser {
   name: string;
   admin: boolean;
   scope?: "super" | "defined";
+  /** Scoped admins only. Missing = the pre-scopes defaults (see LEGACY_DEFAULT_SCOPES). */
+  scopes?: string[];
+  scopeLimits?: { "student.mark"?: number | null };
   [key: string]: unknown;
 }
 
@@ -41,4 +44,11 @@ export async function getAccessibleCourses(admin: AdminUser, onlyCourseId?: stri
     .filter((d) => admin.scope !== "defined" || (d.data().assignedAdmins as string[] | undefined)?.includes(admin.uid))
     .filter((d) => !onlyCourseId || d.id === onlyCourseId)
     .map((d) => ({ id: d.id, name: d.data().name ?? d.id, code: d.data().code ?? "" }));
+}
+
+/** Scoped admins may only act on courses they're assigned to. Super admins: any course. Returns false if the course is missing. */
+export async function canAccessCourse(admin: AdminUser, courseId: string): Promise<boolean> {
+  if (admin.scope === "super") return true;
+  const snap = await db.collection("courses").doc(courseId).get();
+  return snap.exists && ((snap.data()!.assignedAdmins as string[] | undefined) ?? []).includes(admin.uid);
 }

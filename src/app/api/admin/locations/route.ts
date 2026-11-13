@@ -1,49 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db, auth } from "@/lib/firebase-admin";
+import { db } from "@/lib/firebase-admin";
+import { verifyAdmin } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { RADIUS_LIMITS } from "@/constants/location";
 
 const radiusError = `Check-in range must be between ${RADIUS_LIMITS.MIN_M} and ${RADIUS_LIMITS.MAX_M} meters.`;
 const radiusOk = (r: number) => Number.isFinite(r) && r >= RADIUS_LIMITS.MIN_M && r <= RADIUS_LIMITS.MAX_M;
 
-interface SuperAdmin {
-  uid: string;
-  admin: boolean;
-  scope: "super" | "defined";
-  name?: string;
-}
-
-async function verifySuperAdmin(req: NextRequest): Promise<SuperAdmin | null> {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return null;
-  try {
-    const decoded = await auth.verifyIdToken(token);
-    const userDoc = await db.collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists) return null;
-    const user = userDoc.data()!;
-    if (!user.admin || user.scope !== "super") return null;
-    return { uid: decoded.uid, admin: true, scope: "super", name: user.name };
-  } catch {
-    return null;
-  }
-}
-
 // Anchor document that owns the `locations` subcollection inside `globals`.
 const locationsCollection = () =>
   db.collection("globals").doc("locationConfig").collection("locations");
 
-// GET — list all location tags. Any authenticated admin can read (needed when
-// picking a location during class creation), but only super admins can write.
+// GET — list all location tags. Any admin can read (needed when picking a location during class creation).
 export async function GET(req: NextRequest) {
-  const token = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const admin = await verifyAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
 
   try {
-    const decoded = await auth.verifyIdToken(token);
-    const userDoc = await db.collection("users").doc(decoded.uid).get();
-    if (!userDoc.exists || !userDoc.data()?.admin) {
-      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
-    }
-
     const snap = await locationsCollection().orderBy("createdAt", "desc").get();
     const locations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return NextResponse.json({ locations });
@@ -53,10 +26,12 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST — create a new location tag. Super admin only.
+// POST — create a new location tag. Scope: tags.create
 export async function POST(req: NextRequest) {
-  const superAdmin = await verifySuperAdmin(req);
-  if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  const admin = await verifyAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const denied = requireScope(admin, "tags.create");
+  if (denied) return denied;
 
   try {
     const { name, lat, lng, accuracy, radiusMeters, isPrimary } = await req.json();
@@ -92,7 +67,7 @@ export async function POST(req: NextRequest) {
         capturedAccuracyMeters,
         isPrimary: true,
         createdAt: now,
-        createdBy: superAdmin.uid,
+        createdBy: admin.uid,
       });
       await batch.commit();
     } else {
@@ -104,7 +79,7 @@ export async function POST(req: NextRequest) {
         capturedAccuracyMeters,
         isPrimary: false,
         createdAt: now,
-        createdBy: superAdmin.uid,
+        createdBy: admin.uid,
       });
     }
 
@@ -115,10 +90,12 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// PATCH — rename a location, change its radius, or set it as primary. Super admin only.
+// PATCH — rename a location, change its radius, or set it as primary. Scope: tags.edit
 export async function PATCH(req: NextRequest) {
-  const superAdmin = await verifySuperAdmin(req);
-  if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  const admin = await verifyAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const denied = requireScope(admin, "tags.edit");
+  if (denied) return denied;
 
   try {
     const { id, name, radiusMeters, setPrimary } = await req.json();
@@ -155,12 +132,14 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// DELETE — remove a location tag. Super admin only. Cannot delete the only
+// DELETE — remove a location tag. Scope: tags.delete. Cannot delete the only
 // remaining location, and cannot delete the primary while other tags exist
 // (set another one as primary first).
 export async function DELETE(req: NextRequest) {
-  const superAdmin = await verifySuperAdmin(req);
-  if (!superAdmin) return NextResponse.json({ error: "Super admin access required" }, { status: 403 });
+  const admin = await verifyAdmin(req);
+  if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const denied = requireScope(admin, "tags.delete");
+  if (denied) return denied;
 
   try {
     const { id } = await req.json();

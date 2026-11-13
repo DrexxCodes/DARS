@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, auth } from "@/lib/firebase-admin";
 import { verifyAdmin } from "@/lib/admin-auth";
+import { requireScope } from "@/lib/scopes";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import { courseVisibleToStudent } from "@/lib/admission";
 import { enrollmentStatuses, isEnrolled } from "@/lib/enrollment";
@@ -38,6 +39,13 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // An admin looking up someone else needs the student.lookup scope (a student reading their own record doesn't)
+    const isSelfLookup = user.regNumber === regNumber;
+    if (user.admin && !isSelfLookup) {
+      const denied = requireScope({ uid: decoded.uid, ...user } as Parameters<typeof requireScope>[0], "student.lookup");
+      if (denied) return denied;
+    }
+
     if (user.admin && user.scope === "defined" && courseId) {
       const courseDoc = await db.collection("courses").doc(courseId).get();
       const course = courseDoc.data();
@@ -50,11 +58,31 @@ export async function GET(
     if (!studentDoc.exists) return NextResponse.json({ error: "Student not found" }, { status: 404 });
     // The device link is stored as hashes; admins only need to know whether there is one and since when.
     const { boundDevice, ...studentData } = studentDoc.data()!;
+    // Login details for admins who are looking someone else up: email and whether the account is disabled
+    let account: { uid: string | null; email: string; disabled: boolean; isAdmin: boolean } | null = null;
+    if (user.admin && !isSelfLookup) {
+      const uid = (studentData.uid as string | undefined) ?? null;
+      let email = typeof studentData.email === "string" ? studentData.email : "";
+      let disabled = false;
+      let isAdmin = false;
+      if (uid) {
+        const [authUser, linkedUser] = await Promise.all([auth.getUser(uid).catch(() => null), db.collection("users").doc(uid).get()]);
+        if (authUser) {
+          email = authUser.email ?? email;
+          disabled = authUser.disabled;
+        }
+        disabled = disabled || linkedUser.data()?.banned === true;
+        isAdmin = linkedUser.data()?.admin === true;
+      }
+      account = { uid, email, disabled, isAdmin };
+    }
     const student = {
       ...studentData,
       deviceLinked: typeof boundDevice?.did === "string",
       deviceLinkedAt: typeof boundDevice?.boundAt === "number" ? (boundDevice.boundAt as number) : null,
     };
+    // The login uid is internal: admins get what they need through `account`
+    delete (student as Record<string, unknown>).uid;
 
     if (courseId) {
       const recordsSnap = await db
@@ -181,6 +209,7 @@ export async function GET(
 
     return NextResponse.json({
       student: { regNumber, ...student },
+      account,
       courses: attendanceData,
       overall,
     });
@@ -197,6 +226,8 @@ export async function PATCH(
 ) {
   const admin = await verifyAdmin(req);
   if (!admin) return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  const denied = requireScope(admin, "student.lookup"); // lookup comes with editing
+  if (denied) return denied;
 
   try {
     const reg = (await params).regNumber.trim().toUpperCase();

@@ -1,8 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Loader2, X } from "lucide-react";
-import { ReactNode, useEffect } from "react";
+import { Loader2 } from "lucide-react";
+import { ReactNode } from "react";
+import GlideSheet from "@/components/ui/GlideSheet";
 
 // ─── Button ───────────────────────────────────────────────────────────────────
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -137,36 +138,12 @@ interface DialogProps {
   variant?: "default" | "danger" | "warning" | "success";
 }
 
+/** Kept as the app's popup API, but it now renders a bottom sheet on phones and a right-hand drawer on larger screens. */
 export function Dialog({ open, onClose, title, children, icon, variant = "default" }: DialogProps) {
-  useEffect(() => {
-    if (open) document.body.style.overflow = "hidden";
-    else document.body.style.overflow = "";
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
-
-  if (!open) return null;
-
-  const headerColors = {
-    default: "bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300",
-    danger: "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300",
-    warning: "bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300",
-    success: "bg-brand-50 dark:bg-brand-950 text-brand-700 dark:text-brand-300",
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl animate-slide-up overflow-hidden">
-        <div className={cn("flex items-start gap-3 p-5 border-b border-slate-100 dark:border-slate-800", headerColors[variant])}>
-          {icon && <div className="mt-0.5 shrink-0">{icon}</div>}
-          <h3 className="font-semibold text-base flex-1">{title}</h3>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-black/10 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="p-5">{children}</div>
-      </div>
-    </div>
+    <GlideSheet open={open} onClose={onClose} title={title} icon={icon} tone={variant === "danger" ? "danger" : variant === "warning" ? "warning" : "default"}>
+      {children}
+    </GlideSheet>
   );
 }
 

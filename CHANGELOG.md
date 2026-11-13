@@ -1,5 +1,32 @@
 # DARS Changelog
 
+## v2.9.0 — Admin scopes, student account tools, live progress on deletes, extend classes, sheets everywhere
+
+### Added
+- **Scopes for scoped admins.** Super admins hold every scope; a scoped admin only gets the ones they're granted (and still only acts on their assigned courses). Scopes: `class.create`, `class.end`, `class.pause` (pause + resume), `class.extend`, `class.delete`, `course.create`, `course.delete`, `course.student.enlist`, `course.student.delist`, `student.lookup` (comes with editing), `student.mark`, `student.delete`, `tags.create`, `tags.delete`, `tags.edit`.
+  - Set them in **Admin Management > Edit Role** and when granting access on **Grant & Bulk Upload** (`src/constants/scopes.ts`, `ScopePicker`). Stored on the user doc as `scopes` + `scopeLimits`.
+  - **`student.mark` limit.** Super admins can cap how many students a scoped admin may mark for in each class (from when the class starts until it ends). Counted per class in `classes/{courseId}/sessions/{classId}/adminMarks/{adminUid}` (removed with the class day). Applies to marking from Student Lookup and from the Mark page.
+  - **Out of Scope sheet.** Reaching for anything beyond your scopes opens an "Out of Scope" sheet: "The resource you're trying to access from this server is bound under the {scope} scope. You either don't have access to this scope or you have exceeded the limits provided for this scope." Buttons stay visible; the click is checked in the browser first (`useScopes().guard`) and enforced again on the server (`403` with `code: "OUT_OF_SCOPE"`, `src/lib/scopes.ts`).
+  - Admins saved before this version have no `scopes` field and keep exactly what they could do before (`class.create`, `class.end`, `class.pause`, `student.lookup`, `student.mark`) until a super admin saves their role.
+  - Mapping decisions: revoking attendance sits under `student.mark`; approving / removing an Added Course request and adding a delisted student back sit under `course.student.enlist`; creating a course auto-assigns it to the scoped admin who made it; Location Tags is now open to every admin (reading tags is needed to start a class), with create / edit (range, primary) / delete behind `tags.*`.
+- **Student account tools** on Student Lookup: the student's **email**, an Active / Disabled badge, and **Reset password** (emails a reset link), **Disable / Enable account** (blocks sign-in, ends their sessions and blocks marking straight away; records untouched) and **Delete account** (login, profile, details, enrolments, device link and every attendance record; session and student counters are corrected). New route `/api/admin/students/[regNumber]/account` (POST reset_password | disable | enable, DELETE). Admin accounts can't be touched from here. Activity log: `reset_password_requested`, `disable_student`, `enable_student`, `delete_student` (the delete entry keeps the reg number and admin, not the student's email or name).
+- **Live progress + feedback on deletes.** Deleting a class day, a course or a student now opens a sheet that confirms, shows a progress bar with the current step, and ends with a summary of what was removed (or a Try again button; the jobs are safe to re-run). Progress streams from the API as newline-delimited JSON when the request sends `Accept: application/x-ndjson` (`src/lib/progress-stream.ts`, `ConfirmJobSheet`). Revoking an admin uses the same sheet.
+- **Extend classes** (`class.extend`). **Extend Class** on a running class adds time to its end; a clock button on any ended class in Class History **re-opens** it (same attendance list, time counted from now). The sheet has 15 / 30 / 45 / 60 min quick picks, a custom Minutes / Hours field and a preview of the new close time. A class can't run longer than 12 hours from its start, and an ended class can't be re-opened while another is running (`POST /api/classes` action `extend`). Ending a class now stores `endedAt` and the real end time on its session.
+- **Mark page:** "Please click on the course you're offering to mark attendance." under Select Course. Tapping a course with no running class opens a **No active class** sheet instead of an empty form.
+
+### Changed
+- **Popups are sheets.** The shared `GlideSheet` is a bottom sheet on phones and a right-hand drawer from `md` up, and the old centred `Dialog` now renders through it, so every dialog in the app follows the screen size.
+- **Admin Management on phones.** Admins are stacked cards (name, email, role, courses, scopes, then full-width Edit Role / Revoke); Edit Role is a sheet. For super admins the phone's bottom bar now shows **Roles** in the first row (it was buried under "More" as "Admin"; Dashboard moved into More). "Manage Admins" is now **Grant & Bulk Upload**.
+- Super-only deletes are now scope-based: class day (`class.delete`), course (`course.delete`), delist / enlist student. Super admins are unaffected.
+- Deleting a class day is much faster (batched reads instead of one read per student), also closes check-in first if that class is running, and removes its per-admin mark counters. Deleting a course now also corrects each student's attendance total and removes the course from admins' assignments.
+- `GET /api/admin` returns only the fields the page needs. It used to return whole user documents, which are shared with NPS.
+- `POST /api/mark` for another student now also checks the scoped admin is assigned to the course.
+
+### Setup
+- No new packages and no new Firestore indexes. Existing scoped admins need no migration (see defaults above).
+- `users/{uid}` is shared with NPS, so deleting or disabling a student's login affects their other Drexx apps too. The delete sheet says so.
+- Disabling uses Firebase Auth `disabled` plus the existing `banned` flag; enabling clears both.
+
 ## v2.8.0 — Start-class sheet, configurable duration and late cut-off, add a delisted student back, one account per device
 
 ### Added

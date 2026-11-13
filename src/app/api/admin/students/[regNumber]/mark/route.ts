@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { db } from "@/lib/firebase-admin";
 import { verifyAdmin, getAccessibleCourses } from "@/lib/admin-auth";
+import { requireScope, markLimitFor, outOfScope, markLimitMessage } from "@/lib/scopes";
+import { adminMarksRef } from "@/lib/mark-limit";
 import { REG_NUMBER_REGEX } from "@/lib/utils";
 import { audienceOf, isEligibleForCourse } from "@/lib/enrollment";
 import type { MarkableSession } from "@/types/admin";
@@ -11,6 +13,8 @@ type Ctx = { params: Promise<{ regNumber: string }> };
 async function validate(req: NextRequest, ctx: Ctx, courseId: unknown) {
   const admin = await verifyAdmin(req);
   if (!admin) return { error: NextResponse.json({ error: "Admin access required" }, { status: 403 }) };
+  const denied = requireScope(admin, "student.mark");
+  if (denied) return { error: denied };
 
   const reg = (await ctx.params).regNumber.trim().toUpperCase();
   if (!REG_NUMBER_REGEX.test(reg)) return { error: NextResponse.json({ error: "Invalid registration number." }, { status: 400 }) };
@@ -83,10 +87,19 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const recordRef = studentRef.collection("attendance").doc(v.course.id).collection("records").doc(classId);
 
     // One transaction: the record and both counters land together, and a double-click can't count twice
+    // Scoped admins can be capped at N students per class (set by a super admin on the student.mark scope)
+    const limit = markLimitFor(v.admin);
+    const counterRef = adminMarksRef(v.course.id, classId, v.admin.uid);
+
     const outcome = await db.runTransaction(async (tx) => {
-      const [sessionSnap, recordSnap] = await Promise.all([tx.get(sessionRef), tx.get(recordRef)]);
+      const [sessionSnap, recordSnap, counterSnap] = await Promise.all([
+        tx.get(sessionRef),
+        tx.get(recordRef),
+        v.admin.scope === "defined" ? tx.get(counterRef) : Promise.resolve(null),
+      ]);
       if (!sessionSnap.exists) return { status: "NO_CLASS" as const };
       if (recordSnap.exists) return { status: "ALREADY" as const };
+      if (limit !== null && Number(counterSnap?.data()?.count ?? 0) >= limit) return { status: "LIMIT" as const };
 
       const s = sessionSnap.data()!;
       tx.create(recordRef, {
@@ -104,9 +117,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       });
       tx.update(sessionRef, { totalPresence: FieldValue.increment(1) });
       tx.update(studentRef, { totalPresence: FieldValue.increment(1) });
+      if (v.admin.scope === "defined") tx.set(counterRef, { count: FieldValue.increment(1), adminUid: v.admin.uid, updatedAt: Date.now() }, { merge: true });
       return { status: "OK" as const, date: s.date as string };
     });
 
+    if (outcome.status === "LIMIT") return outOfScope("student.mark", "limit", markLimitMessage(limit ?? 0));
     if (outcome.status === "NO_CLASS") return NextResponse.json({ error: "That class no longer exists." }, { status: 404 });
     if (outcome.status === "ALREADY") return NextResponse.json({ error: "Already marked present for that class." }, { status: 409 });
 
